@@ -182,8 +182,8 @@ class hide(hide_och_catch):
             self.mshn[etypen] = tmshn
 
             # bug in the new mesh
-            #self.mshn[etypen][...,0] = self.mshn[etypen][...,0]/2
-            #self.mshn[etypen][...,2] = self.mshn[etypen][...,0]/3
+            self.mshn[etypen][...,0] = self.mshn[etypen][...,0]/2
+            self.mshn[etypen][...,2] = self.mshn[etypen][...,0]/3
 
 
             #etypecls = subclass_where(Interpolation, name=etypen)
@@ -211,54 +211,68 @@ class hide(hide_och_catch):
             # send one point to the function to decide if is in this partition
             # more prcisely, in which old element. new mesh has shape: [Npt, Nele, Nvar]
 
-            index,locmiss = self.loc(j, self.mshn[etypen][:,j],rank)
+            index,unknownid = self.loc(self.mshn[etypen][:,j],rank)
 
             if len(index) > 0:
-                if len(locmiss) > 0:
+                # data structure:
+                # oldmesh partition, etypen, eid, nid, x,y,z
+                if len(unknownid) > 0:
                     storelist[f'{etypen}_p{rank}'].append(index)
-                    sendlist1[f'{etypen}_p{rank}'].append(self.mshn[etypen][:,j])
-                    sendlist1[f'{etypen}_p{rank}_miss_loc'].append(locmiss)
+                    sendlist2[f'{etypen}_p{rank}'].append(self.mshn[etypen][:,j])
+                    sendlist2[f'{etypen}_p{rank}_partially'].append(unknownid)
                 else:
-                    storelist[f'{etypen}_p{rank}'].append(index)
+                    sendlist1[f'{etypen}_p{rank}'].append(self.mshn[etypen][:,j])
 
             else:
-                sendlist2[f'{etypen}_p{rank}'].append(self.mshn[etypen][:,j])
-
+                # data structure:
+                # newmesh partition, etypen, eid, nid, oldmesh rank, etypeo, index
+                storelist[f'{etypen}_p{rank}'].append(index)
 
         print(len(sendlist1[f'{etypen}_p{rank}']),len(sendlist2[f'{etypen}_p{rank}']),len(storelist[f'{etypen}_p{rank}']),self.mshn[etypen].shape[1])
 
         #raise ValueError('stop2')
         return sendlist1, storelist
 
-    def loc(self, eid, ele, rank):
+    def loc(self, ele, rank):
         #idea first sort cloest qo element center, among them sort the cloest points
         #in case of the boundary of the different type of mesh, we have to loop dofferent type of mesh
-        index = defaultdict()
-        miss = defaultdict()
-        temp = list()
+        for etype in self.msho.keys():
 
-        for etypeo in self.msho.keys():
-
-            msho = self.msho[etypeo]
+            #vc = self.vcenter[etype]
+            msho = self.msho[etype]
 
             # get bounding box for that element
-            index_ele,locmiss = self.box(msho,ele, rank)
+            index_ele = self.box(msho,ele)
 
 
+            #raise ValueError('stop1')
 
+            temp = list()
+            unknownid = list()
             if len(index_ele) > 0:
-                """some modification here to allow multi kinds of element types"""
-                temp.append(list((eid, etypeo, index_ele, f'p{rank}')))
+                #print(index.size)
 
-            if np.allclose(ele,msho[:,0]):
-                if rank == 0:
-                    print(index_ele,locmiss)
-            raise ValueError('syop1')
+                etypecls = subclass_where(Interpolation, name=etype)
+                for pt in range(ele.shape[0]):
+                    # get bounding box for that point
+                    index = self.box(msho,ele[pt],index_ele)
+                    #print(index.size)
+                    if len(index) > 0:
+                        eidx  = self.checkposition(index,ele[pt],etype)
+                        if eidx == None:
+                            warnings.warn(f'This point is weird but an element is assigned: {index} rank :{rank}')
 
-        return temp,locmiss
+                        temp.append(list((eidx, etype, f'p{rank}')))
+                    else:
+                        temp.append(list((-1, None, f'p{rank}')))
+                        unknownid.append(pt)
+                return temp,unknownid
 
 
-    def bounding_box(self, x, newx, pindex = []):
+        return temp,unknownid
+
+
+    def bounding_box(self,x,newx):
 
         xmax = np.amax(x,axis=0)
         xmaxindex = np.argsort(xmax)
@@ -267,37 +281,39 @@ class hide(hide_och_catch):
         bxma = np.searchsorted(xmax,newx,sorter=xmaxindex)
         bxmi = np.searchsorted(xmin,newx,sorter=xminindex)
 
-        if len(pindex) > 0:
-            """a bug here: question how to find ele for each pt?"""
-            if not np.all(list(bxma),where=list(bxmi-1)):
-                locmiss = np.where(bxma != bxmi-1)[0]   # record the pts which are in other ranks
-                bxma[locmiss] = -1                      # replace these pts location with -1
-
-                return xminindex[bxma],locmiss
-            else:
-                """pritential bug here and also ho mesh can be solved from here"""
-                #if len(pindex) > len(bxma):
-                return xminindex[bxma],list()
+        index = np.arange(np.min(bxma),np.max(bxmi),1)
+        """
+        if np.min(bxma) == 0 and np.min(newx) - np.min(x) < 10e-8 or np.max(bxmi) == x.shape[1] and np.max(x) - np.max(newx)  < 10e-8:
+            flag = 1
         else:
-            index = np.arange(np.min(bxma),np.max(bxmi),1)
-            return xminindex[index]
+            flag = -1
+        """
+        return xminindex[index]
 
+    def box(self,msho,ele,index=False):
+        if not isinstance(index,bool):
+            index1 = self.bounding_box(msho[:,index,0],ele[0])
+            if index1.size > 0:
+                index2 = self.bounding_box(msho[:,index[index1],1],ele[1])
+                if index2.size > 0:
+                    index3= self.bounding_box(msho[:,index[index1[index2]],2],ele[2])
+                    index = index[index1[index2[index3]]]
 
-    def box(self,msho,ele,rank):
+                    return index
 
-        # this can be rewritten into more beautiful pattern
-        index1 = self.bounding_box(msho[...,0],ele[:,0])
-        if index1.size > 0:
-            index2 = self.bounding_box(msho[:,index1,1],ele[:,1])
-            if index2.size > 0:
-                index3 = self.bounding_box(msho[:,index1[index2],2],ele[:,2])
-                if index3.size > 0:
+            return list()
+
+        else:
+            index1 = self.bounding_box(msho[...,0],ele[:,0])
+            if index1.size > 0:
+                index2 = self.bounding_box(msho[:,index1,1],ele[:,1])
+                if index2.size > 0:
+                    index3 = self.bounding_box(msho[:,index1[index2],2],ele[:,2])
                     index = index1[index2[index3]]
-                    #indexq,locmiss = self.bounding_box(msho[:,index,2],ele[:,2],index)
-                    #return index[indexq],locmiss
-                    return index,list()
-        return list(),list()
 
+                    return index
+
+            return list()
 
 
     def checkposition(self,eidx,pt,etype):
