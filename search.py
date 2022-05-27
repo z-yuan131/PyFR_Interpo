@@ -141,7 +141,6 @@ class hide(hide_och_catch):
         Idlist = defaultdict()
         for i in self.newname:
             sendlist, Idlist[rank] = self.sortpts(i, rank)     #step1
-            return 0
 
 
     def ml1(self,rank):
@@ -182,8 +181,12 @@ class hide(hide_och_catch):
             #self.msho.append(list((etype, tmsh)))
             self.mshn[etypen] = tmshn
 
+            # bug in the new mesh
+            self.mshn[etypen][...,0] = self.mshn[etypen][...,0]/2
+            self.mshn[etypen][...,2] = self.mshn[etypen][...,0]/3
 
-            etypecls = subclass_where(Interpolation, name=etypen)
+
+            #etypecls = subclass_where(Interpolation, name=etypen)
             #if etype == 'hex' or 'quad':
             #    self.ncmsh = etypecls.transfinite(tmsh)
 
@@ -239,17 +242,20 @@ class hide(hide_och_catch):
             msho = self.msho[etype]
 
             # get bounding box for that element
-            index = self.box(msho,ele)
+            index_ele = self.box(msho,ele)
+
+
+            #raise ValueError('stop1')
 
             temp = list()
             unknownid = list()
-            if len(index) > 0:
+            if len(index_ele) > 0:
                 #print(index.size)
 
                 etypecls = subclass_where(Interpolation, name=etype)
                 for pt in range(ele.shape[0]):
                     # get bounding box for that point
-                    index = self.box(msho,ele[pt],index)
+                    index = self.box(msho,ele[pt],index_ele)
                     #print(index.size)
                     if len(index) > 0:
                         eidx  = self.checkposition(index,ele[pt],etype)
@@ -276,6 +282,12 @@ class hide(hide_och_catch):
         bxmi = np.searchsorted(xmin,newx,sorter=xminindex)
 
         index = np.arange(np.min(bxma),np.max(bxmi),1)
+        """
+        if np.min(bxma) == 0 and np.min(newx) - np.min(x) < 10e-8 or np.max(bxmi) == x.shape[1] and np.max(x) - np.max(newx)  < 10e-8:
+            flag = 1
+        else:
+            flag = -1
+        """
         return xminindex[index]
 
     def box(self,msho,ele,index=False):
@@ -284,9 +296,11 @@ class hide(hide_och_catch):
             if index1.size > 0:
                 index2 = self.bounding_box(msho[:,index[index1],1],ele[1])
                 if index2.size > 0:
-                    index3 = self.bounding_box(msho[:,index[index1[index2]],2],ele[2])
+                    index3= self.bounding_box(msho[:,index[index1[index2]],2],ele[2])
                     index = index[index1[index2[index3]]]
+
                     return index
+
             return list()
 
         else:
@@ -296,7 +310,9 @@ class hide(hide_och_catch):
                 if index2.size > 0:
                     index3 = self.bounding_box(msho[:,index1[index2],2],ele[:,2])
                     index = index1[index2[index3]]
+
                     return index
+
             return list()
 
 
