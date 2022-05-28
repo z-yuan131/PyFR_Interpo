@@ -138,9 +138,43 @@ class hide(hide_och_catch):
 
 
         #print('step1 sort point')
-        Idlist = defaultdict()
+        storelist = defaultdict(list)
+        sendlist = defaultdict(list)
+        misslist = defaultdict(list)
         for i in self.newname:
-            sendlist, Idlist[rank] = self.sortpts(i, rank)     #step1
+            sendlist[f'{i}_p{rank}'], storelist[f'{i}_p{rank}'], misslist[f'{i}_p{rank}'] = self.sortpts(i, rank)     #step1
+        # step2 mpi send recv
+        print(sendlist.keys())
+        for i in range(size):
+            if len(sendlist.keys()) > 0:
+                revlist = comm.bcast(sendlist, root = i)
+                #print(rank,revlist.keys())
+
+                catchlist = self.sortpts2(revlist, rank)
+                catchlist = comm.gather(catchlist, root = i)
+                """
+                if rank == i:
+                    # small check routine
+
+                    for j in catchlist:
+                        if len(j) > 0:
+                            for etypen, eid, loccatch, index in j:
+                                print(misslist[f'{etypen}_p{rank}'][eid])
+                                misslist[f'{etypen}_p{rank}'][eid] = list(set(misslist[f'{etypen}_p{rank}'][eid]).difference(set(loccatch)))
+                                print(misslist[f'{etypen}_p{rank}'][eid])
+                                break
+
+                    for j in range(len(catchlist)):
+                        if len(j) > 0:
+                            req = comm.irecv(Alist, root = j)
+                else:
+                    # pick A algorithm
+                    comm.isend(Alist, dest = i)
+                req.WaitAll()
+                """
+
+                comm.Barrier()
+                break
 
 
     def ml1(self,rank):
@@ -181,9 +215,9 @@ class hide(hide_och_catch):
             #self.msho.append(list((etype, tmsh)))
             self.mshn[etypen] = tmshn
 
-            # bug in the new mesh
-            #self.mshn[etypen][...,0] = self.mshn[etypen][...,0]/2
-            #self.mshn[etypen][...,2] = self.mshn[etypen][...,0]/3
+            """ bug in the new mesh """
+            self.mshn[etypen][...,0] = self.mshn[etypen][...,0]/2
+            self.mshn[etypen][...,2] = self.mshn[etypen][...,0]/3
 
 
             #etypecls = subclass_where(Interpolation, name=etypen)
@@ -201,9 +235,9 @@ class hide(hide_och_catch):
 
     def sortpts(self,etypen,rank):  #etypen is the new mesh type (looping in the default dictionary)
 
-        storelist = defaultdict(list)
-        sendlist1 = defaultdict(list)
-        sendlist2 = defaultdict(list)
+        storelist = list()
+        sendlist = list()
+        misslist = list()
         for j in range(self.mshn[etypen].shape[1]):
             if rank == 0:
                 print((j+1)/self.mshn[etypen].shape[1])
@@ -211,54 +245,93 @@ class hide(hide_och_catch):
             # send one point to the function to decide if is in this partition
             # more prcisely, in which old element. new mesh has shape: [Npt, Nele, Nvar]
 
-            index,locmiss = self.loc(j, self.mshn[etypen][:,j],rank)
+            index,locmiss = self.loc(self.mshn[etypen][:,j],rank)
 
-            if len(index) > 0:
-                if len(locmiss) > 0:
-                    storelist[f'{etypen}_p{rank}'].append(index)
-                    sendlist1[f'{etypen}_p{rank}'].append(self.mshn[etypen][:,j])
-                    sendlist1[f'{etypen}_p{rank}_miss_loc'].append(locmiss)
-                else:
-                    storelist[f'{etypen}_p{rank}'].append(index)
-
+            if len(locmiss) > 0:
+                storelist.append(index)
+                #sendlist[f'{etypen}_p{rank}'].append(list((j,self.mshn[etypen][:,j])))
+                misslist.append(list(locmiss))
+                sendlist.append(list((etypen,j,self.mshn[etypen][locmiss,j])))
             else:
-                sendlist2[f'{etypen}_p{rank}'].append(self.mshn[etypen][:,j])
+                misslist.append(list())
+                storelist.append(index)
 
 
-        print(len(sendlist1[f'{etypen}_p{rank}']),len(sendlist2[f'{etypen}_p{rank}']),len(storelist[f'{etypen}_p{rank}']),self.mshn[etypen].shape[1])
+        #print(len(sendlist[f'{etypen}_p{rank}']),len(storelist[f'{etypen}_p{rank}']),self.mshn[etypen].shape[1])
 
-        #raise ValueError('stop2')
-        return sendlist1, storelist
+        return sendlist, storelist, misslist
 
-    def loc(self, eid, ele, rank):
+    def sortpts2(self, revlist, rank):
+        catchlist = list()
+        for key in revlist.keys():
+            for etypen, eid, ele in revlist[key]:
+                index,locmiss = self.loc(ele, rank)
+
+
+                full_loss = list(range(len(ele)))
+                loccatch = list(set(full_loss).difference(set(locmiss)))
+                #if rank == 0:
+                #print(rank, loccatch)
+                if len(loccatch) > 0:
+                    catchlist.append(list((etypen,eid,loccatch,index)))
+
+        return catchlist
+
+
+    def loc(self, ele, rank):
         #idea first sort cloest qo element center, among them sort the cloest points
         #in case of the boundary of the different type of mesh, we have to loop dofferent type of mesh
         index = defaultdict()
-        miss = defaultdict()
-        temp = list()
+        locmiss = defaultdict()
+        miss = set(list(range(len(ele))))
+        temp = list(range(len(ele)))
 
         for etypeo in self.msho.keys():
 
             msho = self.msho[etypeo]
 
             # get bounding box for that element
-            index_ele,locmiss = self.box(msho,ele, rank)
+            index_ele = self.box(msho,ele)
 
 
 
             if len(index_ele) > 0:
                 """some modification here to allow multi kinds of element types"""
-                temp.append(list((eid, etypeo, index_ele, f'p{rank}')))
+                #temp.append(list((eid, etypeo, index_ele, f'p{rank}')))
+                #index = index_ele[self.checkposition(index_ele, ele, etypeo)]
+                index_tp = self.checkposition(index_ele, ele, etypeo)
+                try:
+                    index[etypeo] = index_ele[index_tp]
+                    locmiss[etypeo] = []
+                # a pssibility that point is in another partition or other etypeo
+                except IndexError:
+                    locmiss[etypeo] = list(np.where(index_tp >= len(index_ele))[0])
+                    index_tp[locmiss[etypeo]] = 0
+                    index[etypeo] = index_ele[index_tp]
 
-            if np.allclose(ele,msho[:,0]):
-                if rank == 0:
-                    print(index_ele,locmiss)
-            raise ValueError('syop1')
+                # gather all locmiss and assemble store matrix
+                miss = miss.intersection((locmiss[etypeo]))
+                for i in range(len(index[etypeo])):
+                    if i not in locmiss[etypeo]:
+                        temp[i] = list((etypeo,f'p{rank}',index[etypeo][i]))
 
-        return temp,locmiss
+            else:
+                locmiss[etypeo] = list(np.arange(len(ele),dtype='int'))
+                miss = miss.intersection((locmiss[etypeo]))
 
 
-    def bounding_box(self, x, newx, pindex = []):
+        miss = list(miss)
+
+        #if rank == 0:
+        #    print(temp,miss)
+
+
+        #raise ValueError('syop1')
+
+        return temp,miss
+
+
+    def bounding_box(self, x, newx):
 
         xmax = np.amax(x,axis=0)
         xmaxindex = np.argsort(xmax)
@@ -267,23 +340,14 @@ class hide(hide_och_catch):
         bxma = np.searchsorted(xmax,newx,sorter=xmaxindex)
         bxmi = np.searchsorted(xmin,newx,sorter=xminindex)
 
-        if len(pindex) > 0:
-            """a bug here: question how to find ele for each pt?"""
-            if not np.all(list(bxma),where=list(bxmi-1)):
-                locmiss = np.where(bxma != bxmi-1)[0]   # record the pts which are in other ranks
-                bxma[locmiss] = -1                      # replace these pts location with -1
+        index = np.arange(np.min(bxma),np.max(bxmi),1)
+        return xminindex[index]
 
-                return xminindex[bxma],locmiss
-            else:
-                """pritential bug here and also ho mesh can be solved from here"""
-                #if len(pindex) > len(bxma):
-                return xminindex[bxma],list()
-        else:
-            index = np.arange(np.min(bxma),np.max(bxmi),1)
-            return xminindex[index]
+    #def bounding_box_pt(self, msho, ele):
 
 
-    def box(self,msho,ele,rank):
+
+    def box(self, msho, ele):
 
         # this can be rewritten into more beautiful pattern
         index1 = self.bounding_box(msho[...,0],ele[:,0])
@@ -293,29 +357,22 @@ class hide(hide_och_catch):
                 index3 = self.bounding_box(msho[:,index1[index2],2],ele[:,2])
                 if index3.size > 0:
                     index = index1[index2[index3]]
-                    #indexq,locmiss = self.bounding_box(msho[:,index,2],ele[:,2],index)
-                    #return index[indexq],locmiss
-                    return index,list()
-        return list(),list()
+                    return index
+        return list()
 
 
 
-    def checkposition(self,eidx,pt,etype):
+    def checkposition(self,eidx,pts,etype):
         #load fcenter and vcenter first
 
         vcenter = self.vcenter[etype]
         fcenter = self.fcenter[etype]
+        #index = np.empty_like(eidx)
 
+        """a fuction to make pt shift to pt_nocur"""
+        etypecls = subclass_where(Interpolation, name=etype)
+        #if etype == 'hex' or 'quad':
+        #.   pt  = etypecls().transfinite
 
-        # loop the number of elements
-        for i in eidx:
-
-            """a fuction to make pt shift to pt_nocur"""
-            etypecls = subclass_where(Interpolation, name=etype)
-            #if etype == 'hex' or 'quad':
-            #.   pt  = etypecls().transfinite
-
-            # chech if in the element  #fcenter [Nfaces,Nele,Nvar] vcenter [Nele,Nvar]
-
-            if etypecls(self.argv[0]).facenormal(fcenter[:,i], vcenter[i], pt):
-                return i
+        # chech if in the element  #fcenter [Nfaces,Nele,Nvar] vcenter [Nele,Nvar]
+        return etypecls(self.argv[0]).facenormal(fcenter[:,eidx], vcenter[eidx], pts)

@@ -85,11 +85,30 @@ class HexType(Interpolation):
 
 
 
-    def facenormal(self, fcenter, vcenter, pt_nocur):
+    def facenormal(self, fcenter, vcenter, pt_noncur):
+        #print('construct the face normal')
+        norvec = vcenter - fcenter
+        ptvec  = np.array([fcenter - pt for pt in pt_noncur])
+        # using einstien notition to do tensor product and extract diagonal entries
+        out    = np.einsum('ijk,lmqk->lijqm', norvec, ptvec)
+        out1   = np.einsum('kijji->kji',out)
+        # is that a good idea to use this loop?
+        index  = np.zeros(len(pt_noncur),dtype='int')
+        for i in range(len(pt_noncur)):
+            for j in range(len(vcenter)):
+                if np.all(out1[i,j] < 10e-10) or np.all(out1[i,j] > -10e-10):
+                    index[i] = j
+                    break
+                """if there is a bug, it is because this point is not in the bounding box"""
+                index[i] = 10000
+        return index
+
+
+    def facenormal_old(self, fcenter, vcenter, pt_noncur):
         #print('construct the face normal')
         normvec = fcenter - vcenter
 
-        ptvec = pt_nocur - fcenter
+        ptvec = fcenter - pt_noncur
 
         if np.all(np.diag(ptvec @ normvec.T) <= 0) or np.all(np.diag(ptvec @ normvec.T) >= 0):
             return True
