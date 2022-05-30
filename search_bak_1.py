@@ -93,12 +93,11 @@ class hide_och_catch(object):
 
         return name
 
-    def loadsoln(self,name,rank):
+    def loadsoln(self,name):
 
         part = []
         asoln = np.array([])
         soln_inf = self.soln.array_info('soln')
-        """
         for sk, (etype, shape) in soln_inf.items():
             if etype == name and sk.split('_')[-1] != [parts for parts in part]:
                 part.append(sk.split('_')[-1])
@@ -107,10 +106,6 @@ class hide_och_catch(object):
                 else:
                     asoln = np.concatenate((asoln,self.soln[sk].astype(self.dtype)),axis=-1)
         return asoln.swapaxes(1,2)
-        """
-        for sk, (etype, shape) in soln_inf.items():
-            if etype == name and sk.split('_')[-1] ==f'p{rank}':
-                return self.soln[sk].astype(self.dtype)#.swapaxes(1,2)
 
 
 
@@ -139,7 +134,7 @@ class hide(hide_och_catch):
     def getID(self, rank, size, comm):
 
         #print('precalculate all data that needed during processing')
-        self.ml1(rank,comm)
+        self.ml1(rank)
 
 
         #print('step1 sort point')
@@ -147,132 +142,52 @@ class hide(hide_och_catch):
         sendlist = defaultdict(list)
         misslist = defaultdict(list)
         for i in self.newname:
-            sendlist, storelist, misslist[f'{i}_p{rank}'] = self.sortpts(i, rank)     #step1
-
+            sendlist[f'{i}_p{rank}'], storelist[f'{i}_p{rank}'], misslist[f'{i}_p{rank}'] = self.sortpts(i, rank)     #step1
         # step2 mpi send recv
+        print(sendlist.keys())
         for i in range(size):
-            if len(sendlist) > 0:
+            if len(sendlist.keys()) > 0:
                 revlist = comm.bcast(sendlist, root = i)
                 #print(rank,revlist.keys())
 
                 catchlist = self.sortpts2(revlist, rank)
-                #print(rank,len(storelist))
-
-                """
-                # small check routine
-                catchlist = self.sortpts2(revlist, rank)
                 catchlist = comm.gather(catchlist, root = i)
+
                 if rank == i:
 
+                    # small check routine
                     for j in catchlist:
                         if len(j) > 0:
                             for etypen, eid, loccatch, index in j:
                                 #print(misslist[f'{etypen}_p{rank}'][eid])
                                 #misslist[f'{etypen}_p{rank}'][eid] = list(set(misslist[f'{etypen}_p{rank}'][eid]).difference(set(loccatch)))
                                 #print(misslist[f'{etypen}_p{rank}'][eid])
-                                print(j)
+                                print(index)
                                 break
-                            break
                 """
-                if rank == i:
-                    if len(storelist) > 0:
-                        Alist_temp = self.group_A(storelist, i, rank)
-                elif len(catchlist) > 0:
-                    Alist_temp = self.group_A(catchlist, i, rank)
+                    for j in range(len(catchlist)):
+                        if len(j) > 0:
+                            req = comm.irecv(Alist, root = j)
                 else:
-                    Alist_temp = defaultdict(list)
-
-                temp = comm.gather(Alist_temp, root = i)
-                if rank == i: ## it seems it will rewrite Alist, so replace it with temp
-                    Alist = temp
-
-            else:
-                Alist = self.group_A(storelist, i, rank)
-
-                #comm.Barrier()
-                #break
-        comm.Barrier()
-        # do something to get right A
-        self.write_A(Alist, size, rank)
-
-    def write_A(self, Alist, size, rank):
-        for i in range(len(Alist)):
-            if len(Alist[i].keys()) > 0:
-                Pspace = list()
-
-                print(rank, Alist[i].keys())
-                # A_info[0] is etypen,  A_info[1] is eidn, A_info[2] is node indices, A_info[3] is A matrices
-                for key in Alist[i]:
-                    A_info = list(zip(*Alist[i][key]))
+                    # pick A algorithm
+                    comm.isend(Alist, dest = i)
+                req.WaitAll()
+                """
 
 
-                    for j in range(len(A_info[0])):
-                        #print(A_info[0][j],A_info[1][j],A_info[3][j].shape)
-                        print(type(self.Anew[A_info[0][j]][:,A_info[1][j]]),type(A_info[3][j].shape))
-                        #Pspace.append(self.Anew[A_info[0][j]][:,A_info[1][j]] @ np.linalg.inv(A_info[3][j]))
-                        self.solnn[A_info[2][j],:,A_info[1][j]] = self.Anew[A_info[0][j]][:,A_info[1][j]] @ np.array(A_info[3][j])
+                comm.Barrier()
+                break
 
 
-
-
-
-
-    def group_A(self, catchlist, origin_rank, current_rank):
-        Alist = defaultdict(list)
-        name = f'p{origin_rank}_->_p{current_rank}'
-
-        # info[0] is etypeo, info[1] is eid, info[2] is loccatch, info[4] is index
-        info = list(zip(*catchlist))
-        for i in range(len(info[0])):
-            D = [info[3][i][c] for c in info[2][i]]
-            info_index = list(zip(*D))
-
-            F = list(set(info_index[0]))
-            for k in F:
-                index = np.where(k == np.array(info_index[0]))[0]
-                E = list(set(np.array(info_index[2])[index]))
-                for j in E:
-                    index = np.where(j == np.array(info_index[2]))[0]
-                    index = np.array(info[2][i])[index]
-
-                    # data structure index is
-                    # info[1][i] is eid of old mesh info[0][i] is new element type
-                    # index is node indices of new mesh
-                    # the last one is A matrix of that old mesh
-                    Alist[f'{name}_{k}'].append(list((info[0][i], info[1][i], index, self.A[k][:,j] @ self.solno[k][...,j])))
-
-        print(Alist.keys())
-        #self.write_to_file(Alist)
-        return Alist
-
-    def write_to_file(self, datafile):
-        import h5py
-
-        #flush to disk
-        with h5py.File('Alist.zhenyang', 'a') as f:
-            for key in datafile.keys():
-                print(key)
-                f.create_dataset(key, data=np.array(datafile[key]))
-            f.close()
-
-
-
-
-
-
-    def ml1(self,rank,comm):
+    def ml1(self,rank):
         #pre-load the old mesh respect to different eletype
         self.msho = defaultdict()
-        self.solno = defaultdict()
         self.vcenter = defaultdict()
         self.fcenter = defaultdict()
 
         self.mshn = defaultdict()
-        self.solnn = defaultdict()
-
 
         self.A = defaultdict()
-        self.Anew = defaultdict()
 
 
 
@@ -282,7 +197,6 @@ class hide(hide_och_catch):
             tmsh = self.loadmesh(etype,'old',rank)
             #self.msho.append(list((etype, tmsh)))
             self.msho[etype] = tmsh
-            self.solno[etype] = self.loadsoln(etype,rank)
 
             #pre-calculate the old mesh center of vlume and center of face is applicatable
             etypecls = subclass_where(Interpolation, name=etype)
@@ -295,20 +209,7 @@ class hide(hide_och_catch):
             self.fcenter[etype] = fc
 
             #pre-calculate polynomial space for each element
-            """ some problem here, in notebook, it will take 10s, but here it is forever
-            self.A[etype] = etypecls(self.argv[0]).A1(tmsh).swapaxes(0,1)
-            print(self.A[etype].shape)
-
-            self.A[etype] = self.fast_inverse2(self.A[etype]).swapaxes(0,1)
-            print(self.A[etype].shape)
-            """
-            """ so I will load from a file"""
-            import h5py
-            with h5py.File('Alist.zhenyang', 'r') as f:
-                for key in f.keys():
-                    if key.split('_')[-1] == f'p{rank}':
-                        self.A[etype] = np.array(f[key])
-                f.close()
+            self.A[etype] = etypecls(self.argv[0]).A1(tmsh)
 
 
         for etypen in self.newname:
@@ -320,8 +221,6 @@ class hide(hide_och_catch):
             self.mshn[etypen][...,0] = self.mshn[etypen][...,0]/2
             self.mshn[etypen][...,2] = self.mshn[etypen][...,0]/3
 
-            self.solnn[etypen] = np.empty((self.mshn[etypen].shape[0],5,self.mshn[etypen].shape[1]))
-
 
             #etypecls = subclass_where(Interpolation, name=etypen)
             #if etype == 'hex' or 'quad':
@@ -332,20 +231,9 @@ class hide(hide_och_catch):
             #self.vcn[etypen] = vc
 
 
-            #pre-calculate polynomial space for each element
-            self.Anew[etypen] = etypecls(self.argv[0]).A1(tmshn)
+            #self.Alist[etypen] = np.zeros([tmshn.shape[0],tmshn.shape[0],tmshn.shape[1]])
 
-    def fast_inverse(self, A):
-        identity = np.identity(A.shape[2], dtype=A.dtype)
-        Ainv = np.zeros_like(A)
 
-        for i in range(A.shape[0]):
-            Ainv[i] = np.linalg.solve(A[i], identity)
-        return Ainv
-
-    def fast_inverse2(A):
-        identity = np.identity(A.shape[2], dtype=A.dtype)
-        return np.array([np.linalg.solve(x, identity) for x in A])
 
     def sortpts(self,etypen,rank):  #etypen is the new mesh type (looping in the default dictionary)
 
@@ -361,19 +249,14 @@ class hide(hide_och_catch):
 
             index,locmiss = self.loc(self.mshn[etypen][:,j],rank)
 
-            full_loss = list(range(len(self.mshn[etypen][:,j])))
-            loccatch = list(set(full_loss).difference(set(locmiss)))
-
-            if len(locmiss) > 0 and len(loccatch) > 0:
-                storelist.append(list((etypen,j,loccatch,index)))
-                misslist.append(list(locmiss))
-                sendlist.append(list((etypen,j,self.mshn[etypen][locmiss,j])))
-            elif len(locmiss) > 0:
+            if len(locmiss) > 0:
+                storelist.append(index)
+                #sendlist[f'{etypen}_p{rank}'].append(list((j,self.mshn[etypen][:,j])))
                 misslist.append(list(locmiss))
                 sendlist.append(list((etypen,j,self.mshn[etypen][locmiss,j])))
             else:
                 misslist.append(list())
-                storelist.append(list((etypen,j,loccatch,index)))
+                storelist.append(index)
 
 
         #print(len(sendlist[f'{etypen}_p{rank}']),len(storelist[f'{etypen}_p{rank}']),self.mshn[etypen].shape[1])
@@ -382,19 +265,19 @@ class hide(hide_och_catch):
 
     def sortpts2(self, revlist, rank):
         catchlist = list()
-        for etypen, eid, ele in revlist:
-            index,locmiss = self.loc(ele, rank)
+        for key in revlist.keys():
+            for etypen, eid, ele in revlist[key]:
+                index,locmiss = self.loc(ele, rank)
 
-            full_loss = list(range(len(ele)))
-            loccatch = list(set(full_loss).difference(set(locmiss)))
-            #if rank == 0:
-            #print(rank, loccatch)
-            if len(loccatch) > 0:
-                #Alist = self.findA(index)
-                catchlist.append(list((etypen,eid,loccatch,index)))
+
+                full_loss = list(range(len(ele)))
+                loccatch = list(set(full_loss).difference(set(locmiss)))
+                #if rank == 0:
+                #print(rank, loccatch)
+                if len(loccatch) > 0:
+                    catchlist.append(list((etypen,eid,loccatch,index)))
 
         return catchlist
-
 
 
     def loc(self, ele, rank):
