@@ -15,12 +15,14 @@ def main():
     if len(sys.argv) != 4:
         raise RuntimeError('Three positional arguments are needed: Oldmesh, Oldsoln, Newmesh')
 
-    ininame = '../channel/channel_Retau180.ini'
-    solnname = '../channel/100.pyfrs'
+    oininame = '../channel/channel_Retau180.ini'
+    solnname = '../channel/channel_1300.00.pyfrs'
     omeshname = '../channel/mesh_channel.pyfrm'
     nmeshname = '../channel/mesh_new_less_less.pyfrm'
+    nmeshname = './refine.pyfrm'
 
-    sys.argv = [ininame,omeshname,solnname,nmeshname]
+
+    sys.argv = [oininame,omeshname,solnname,nmeshname]
 
 
 

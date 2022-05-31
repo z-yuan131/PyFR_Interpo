@@ -164,6 +164,22 @@ class hide(hide_och_catch):
                 catchlist = self.sortpts2(revlist, rank)
                 #print(rank,len(storelist))
 
+                """
+                # small check routine
+                catchlist = self.sortpts2(revlist, rank)
+                catchlist = comm.gather(catchlist, root = i)
+                if rank == i:
+
+                    for j in catchlist:
+                        if len(j) > 0:
+                            for etypen, eid, loccatch, index in j:
+                                #print(misslist[f'{etypen}_p{rank}'][eid])
+                                #misslist[f'{etypen}_p{rank}'][eid] = list(set(misslist[f'{etypen}_p{rank}'][eid]).difference(set(loccatch)))
+                                #print(misslist[f'{etypen}_p{rank}'][eid])
+                                print(j)
+                                break
+                            break
+                """
                 if rank == i:
                     if len(storelist) > 0:
                         Alist_temp = self.group_A(storelist, i, rank)
@@ -206,7 +222,8 @@ class hide(hide_och_catch):
                         #print(A_info[0][j],A_info[1][j],A_info[3][j].shape)
                         #print(self.Anew[A_info[0][j]][:,A_info[1][j]].shape,A_info[3][j].shape)
                         self.solnn[A_info[0][j]][A_info[2][j],:,A_info[1][j]] = self.Anew[A_info[0][j]][A_info[2][j],A_info[1][j]] @ A_info[3][j]
-        print(np.isnan(np.min(self.solnn['hex'])))
+                        print(rank, self.Anew[A_info[0][j]][A_info[2][j],A_info[1][j]].shape)
+
 
 
 
@@ -232,8 +249,7 @@ class hide(hide_och_catch):
                     # info[1][i] is eid of old mesh info[0][i] is new element type
                     # index is node indices of new mesh
                     # the last one is A matrix of that old mesh
-                    #print(self.A[k][:,j].shape, self.solno[k][...,j].shape)
-                    Alist[f'{name}_{k}'].append(list((info[0][i], info[1][i], index, self.A[k][j])))
+                    Alist[f'{name}_{k}'].append(list((info[0][i], info[1][i], index, self.A[k][:,j] @ self.solno[k][...,j])))
 
         print(Alist.keys())
         #self.write_to_file(Alist)
@@ -257,7 +273,7 @@ class hide(hide_och_catch):
     def ml1(self,rank,comm):
         #pre-load the old mesh respect to different eletype
         self.msho = defaultdict()
-        solno = defaultdict()
+        self.solno = defaultdict()
         self.vcenter = defaultdict()
         self.fcenter = defaultdict()
 
@@ -276,7 +292,7 @@ class hide(hide_och_catch):
             tmsh = self.loadmesh(etype,'old',rank)
             #self.msho.append(list((etype, tmsh)))
             self.msho[etype] = tmsh
-            solno[etype] = np.rollaxis(self.loadsoln(etype,rank),2)
+            self.solno[etype] = self.loadsoln(etype,rank)
 
             #pre-calculate the old mesh center of vlume and center of face is applicatable
             etypecls = subclass_where(Interpolation, name=etype)
@@ -289,21 +305,20 @@ class hide(hide_och_catch):
             self.fcenter[etype] = fc
 
             #pre-calculate polynomial space for each element
-            # actually one can calculate coeeficient matrices by solve soln = polyspace*coeff
-            """
+            """ some problem here, in notebook, it will take 10s, but here it is forever
             self.A[etype] = etypecls(self.argv[0]).A1(tmsh).swapaxes(0,1)
-            print(rank, self.A[etype].shape, solno[etype].shape)
-            self.A[etype] = np.linalg.solve(self.A[etype], solno[etype])
-            print(self.A[etype].shape, solno[etype].shape)
+            print(self.A[etype].shape)
+
+            self.A[etype] = self.fast_inverse2(self.A[etype]).swapaxes(0,1)
+            print(self.A[etype].shape)
             """
+            """ so I will load from a file"""
             import h5py
             with h5py.File('Alist.zhenyang', 'r') as f:
                 for key in f.keys():
                     if key.split('_')[-1] == f'p{rank}':
                         self.A[etype] = np.array(f[key])
                 f.close()
-
-
 
 
         for etypen in self.newname:
@@ -313,8 +328,8 @@ class hide(hide_och_catch):
             #self.setup['mesh_uuid'] = self.loadmesh(etypen,'uuid',rank)
 
             """ bug in the new mesh """
-            #self.mshn[etypen][...,0] = self.mshn[etypen][...,0]/2
-            #self.mshn[etypen][...,2] = self.mshn[etypen][...,0]/3
+            self.mshn[etypen][...,0] = self.mshn[etypen][...,0]/2
+            self.mshn[etypen][...,2] = self.mshn[etypen][...,0]/3
 
             self.solnn[etypen] = np.empty((self.mshn[etypen].shape[0],5,self.mshn[etypen].shape[1]))
 

@@ -146,3 +146,64 @@ class HexType(Interpolation):
 
 
         return temp
+
+
+class QuadType(Interpolation):
+    name = 'quad'
+
+    def __init__(self,cfg):
+        super().__init__(cfg)
+
+    def npts(self):
+        return (self.order+1)**2
+
+
+    def pre_calc(self, mesh):
+        Npts = mesh.shape[0]
+        Neles = mesh.shape[1]
+        Nvar = mesh.shape[2]
+        if Npts == (self.order+1)**2:
+            #mesh = self.transfinit_mapping(mshe,pt)
+            mesh = mesh
+        vcenter = np.sum(mesh,axis=0)/Npts
+
+        vpt = mesh.reshape((self.order+1,self.order+1, Neles, Nvar),order = 'F')
+        fcenter = np.array([np.sum(vpt[:,0]), np.sum(vpt[:,-1]), np.sum(vpt[0]), np.sum(vpt[-1])])/(self.order+1)
+
+        return vcenter, fcenter
+
+
+
+    def facenormal(self, fcenter, vcenter, pt_noncur):
+        #print('construct the face normal')
+        norvec = vcenter - fcenter
+        ptvec  = np.array([fcenter - pt for pt in pt_noncur])
+        # using einstien notition to do tensor product and extract diagonal entries
+        out    = np.einsum('ijk,lmqk->lijqm', norvec, ptvec)
+        out1   = np.einsum('kijji->kji',out)
+        # is that a good idea to use this loop?
+        index  = np.zeros(len(pt_noncur),dtype='int')
+        for i in range(len(pt_noncur)):
+            for j in range(len(vcenter)):
+                if np.all(out1[i,j] < 10e-10) or np.all(out1[i,j] > -10e-10):
+                    index[i] = j
+                    break
+                """if there is a bug, it is because this point is not in the bounding box"""
+                index[i] = 10000
+        return index
+
+
+    def A1(self, msh):
+        if msh.ndim == 1:
+            temp = np.zeros([1,(self.order+1)**2])
+
+        else:
+            temp = np.zeros([msh.shape[0],msh.shape[1],(self.order+1)**2])   #this is where the problem is, npt
+
+        m = 0
+        for k in range(self.order+1):
+            for l in range(self.order+1):
+                temp.T[m] = msh.T[0]**k * msh.T[1]**l
+                m += 1
+
+        return temp
