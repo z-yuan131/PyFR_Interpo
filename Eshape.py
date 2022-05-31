@@ -99,8 +99,8 @@ class HexType(Interpolation):
                 if np.all(out1[i,j] < 10e-10) or np.all(out1[i,j] > -10e-10):
                     index[i] = j
                     break
-                """if there is a bug, it is because this point is not in the bounding box"""
-                index[i] = 10000
+                #if there is a bug, it is because this point is not in the bounding box
+                index[i] = 10e10
         return index
 
 

@@ -70,15 +70,6 @@ class hide_och_catch(object):
         part = []
         amesh = np.array([])
         mesh_inf = mesh.array_info('spt')
-        """
-        for sk, (etype, shape) in mesh_inf.items():
-            if etype == name and sk.split('_')[-1] != [parts for parts in part]:
-                part.append(sk.split('_')[-1])
-                if amesh.size == 0:
-                    amesh = mesh[sk].astype(self.dtype).swapaxes(1,2)
-                else:
-                    amesh = np.concatenate((amesh,mesh[sk].astype(self.dtype).swapaxes(1,2)),axis=-1)
-        """
         for sk, (etype, shape) in mesh_inf.items(): # only load the mesh with same partition and type
             if etype == name and sk.split('_')[-1] == f'p{rank}':
                 return mesh[sk].astype(self.dtype)    #,mesh[sk].attrs #mesh attributes can indicate if it is curved
@@ -103,16 +94,6 @@ class hide_och_catch(object):
         part = []
         asoln = np.array([])
         soln_inf = self.soln.array_info('soln')
-        """
-        for sk, (etype, shape) in soln_inf.items():
-            if etype == name and sk.split('_')[-1] != [parts for parts in part]:
-                part.append(sk.split('_')[-1])
-                if asoln.size == 0:
-                    asoln = self.soln[sk].astype(self.dtype)
-                else:
-                    asoln = np.concatenate((asoln,self.soln[sk].astype(self.dtype)),axis=-1)
-        return asoln.swapaxes(1,2)
-        """
         for sk, (etype, shape) in soln_inf.items():
             if etype == name and sk.split('_')[-1] ==f'p{rank}':
                 return self.soln[sk].astype(self.dtype)#.swapaxes(1,2)
@@ -318,31 +299,9 @@ class hide(hide_och_catch):
 
             self.solnn[etypen] = np.empty((self.mshn[etypen].shape[0],5,self.mshn[etypen].shape[1]))
 
-
-            #etypecls = subclass_where(Interpolation, name=etypen)
-            #if etype == 'hex' or 'quad':
-            #    self.ncmsh = etypecls.transfinite(tmsh)
-
-            #vc, fc = etypecls(self.argv[0]).pre_calc(tmshn)
-
-            #self.vcn[etypen] = vc
-
-
             #pre-calculate polynomial space for each element
             self.Anew[etypen] = etypecls(self.argv[0]).A1(tmshn)
 
-
-    def fast_inverse(self, A):
-        identity = np.identity(A.shape[2], dtype=A.dtype)
-        Ainv = np.zeros_like(A)
-
-        for i in range(A.shape[0]):
-            Ainv[i] = np.linalg.solve(A[i], identity)
-        return Ainv
-
-    def fast_inverse2(A):
-        identity = np.identity(A.shape[2], dtype=A.dtype)
-        return np.array([np.linalg.solve(x, identity) for x in A])
 
     def sortpts(self,etypen,rank):  #etypen is the new mesh type (looping in the default dictionary)
 
@@ -395,8 +354,8 @@ class hide(hide_och_catch):
 
 
     def loc(self, ele, rank):
-        #idea first sort cloest qo element center, among them sort the cloest points
-        #in case of the boundary of the different type of mesh, we have to loop dofferent type of mesh
+        # idea first sort cloest qo element center, among them sort the cloest points
+        # in case of the boundary of the different type of mesh, we have to loop dofferent type of mesh
         index = defaultdict()
         locmiss = defaultdict()
         miss = set(list(range(len(ele))))
@@ -412,7 +371,6 @@ class hide(hide_och_catch):
 
 
             if len(index_ele) > 0:
-                """some modification here to allow multi kinds of element types"""
                 #temp.append(list((eid, etypeo, index_ele, f'p{rank}')))
                 #index = index_ele[self.checkposition(index_ele, ele, etypeo)]
                 index_tp = self.checkposition(index_ele, ele, etypeo)
