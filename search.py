@@ -1,6 +1,7 @@
 # firstly have a class to sort out the points, i.e. which points in the
 # new mesh is belong to which element in the old mesh
 from pyfr.util import memoize, subclass_where
+from pyfr.shapes import BaseShape
 from loadingfun import load_ini_info, load_soln_info, load_mesh_info
 from Eshape import Interpolation
 
@@ -166,12 +167,12 @@ class hide(hide_och_catch):
         # do something to get right A
         self.write_A(Alist, rank)
 
-        """
+
         for i in range(size):
             if i == rank:
                 self.write_to_file(self.solnn, rank)
             comm.Barrier()
-        """
+
 
     def write_A(self, Alist, rank):
         for i in range(len(Alist)):
@@ -277,6 +278,19 @@ class hide(hide_och_catch):
             self.A[etype] = np.linalg.solve(self.A[etype], solno[etype])
             print(self.A[etype].shape, solno[etype].shape)
             """
+            """
+            import h5py
+            with h5py.File('Alist.zhenyang', 'r') as f:
+                for key in f.keys():
+                    if key.split('_')[-1] == f'p{rank}':
+                        self.A[etype] = np.array(f[key])
+                f.close()
+            """
+            """ this is right way to make full rank matrix but not working
+            cls = subclass_where(BaseShape, name=etype)
+            self.A[etype] = etypecls(self.argv[0]).A1(cls)
+            self.A[etype] = np.linalg.solve(self.A[etype], solno[etype])
+            """
             import h5py
             with h5py.File('Alist.zhenyang', 'r') as f:
                 for key in f.keys():
@@ -300,7 +314,9 @@ class hide(hide_och_catch):
             self.solnn[etypen] = np.empty((self.mshn[etypen].shape[0],5,self.mshn[etypen].shape[1]))
 
             #pre-calculate polynomial space for each element
-            self.Anew[etypen] = etypecls(self.argv[0]).A1(tmshn)
+            #cls = subclass_where(BaseShape, name=etype)
+            #self.Anew[etypen] = etypecls(self.argv[0]).A1(cls)
+            self.Anew[etypen] = etypecls(self.argv[0]).original_A1(tmshn)
 
 
     def sortpts(self,etypen,rank):  #etypen is the new mesh type (looping in the default dictionary)
@@ -384,15 +400,14 @@ class hide(hide_och_catch):
                     index[etypeo] = index_ele[index_tp]
 
                 # gather all locmiss and assemble store matrix
-                miss = miss.intersection((locmiss[etypeo]))
+                miss = miss.intersection(set(locmiss[etypeo]))
                 for i in range(len(index[etypeo])):
                     if i not in locmiss[etypeo]:
                         temp[i] = list((etypeo,f'p{rank}',index[etypeo][i]))
 
             else:
                 locmiss[etypeo] = list(np.arange(len(ele),dtype='int'))
-                miss = miss.intersection((locmiss[etypeo]))
-
+                miss = miss.intersection(set(locmiss[etypeo]))
 
         miss = list(miss)
 

@@ -130,12 +130,10 @@ class HexType(Interpolation):
         A = self.A1(pt) @ np.linalg.pinv(A0)
         return A
 
-    def A1(self, msh):
-        if msh.ndim == 1:
-            temp = np.zeros([1,(self.order+1)**3])
-
-        else:
-            temp = np.zeros([msh.shape[0],msh.shape[1],(self.order+1)**3])   #this is where the problem is, npt
+    def A1(self, stdcls):
+        msh = np.array(stdcls.std_ele(self.order))
+        
+        temp = np.zeros([msh.shape[0],(self.order+1)**3])   #this is where the problem is, npt
 
         m = 0
         for k in range(self.order+1):
@@ -146,6 +144,23 @@ class HexType(Interpolation):
 
 
         return temp
+
+    def original_A1(self, msh):
+            if msh.ndim == 1:
+                temp = np.zeros([1,(self.order+1)**3])
+
+            else:
+                temp = np.zeros([msh.shape[0],msh.shape[1],(self.order+1)**3])   #this is where the problem is, npt
+
+            m = 0
+            for k in range(self.order+1):
+                for l in range(self.order+1):
+                    for n in range(self.order+1):
+                        temp.T[m] = msh.T[0]**k * msh.T[1]**l * msh.T[2]**n
+                        m += 1
+
+
+            return temp
 
 
 class QuadType(Interpolation):
