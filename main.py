@@ -18,7 +18,7 @@ def main():
     oininame = '../channel/channel_Retau180.ini'
     solnname = '../channel/channel_1300.00.pyfrs'
     omeshname = '../channel/mesh_channel.pyfrm'
-    nmeshname = '../channel/mesh_new_less_less.pyfrm'
+    nmeshname = '../channel/mesh_channel.pyfrm'
     nmeshname = './refine.pyfrm'
 
 
