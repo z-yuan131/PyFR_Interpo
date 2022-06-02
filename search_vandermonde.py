@@ -149,14 +149,11 @@ class hide(hide_och_catch):
                 if rank == i:
                     if len(storelist) > 0:
                         Alist_temp = self.group_A(storelist, i, rank)
-                    else:
-                        Alist_temp = defaultdict(list)
                 elif len(catchlist) > 0:
                     Alist_temp = self.group_A(catchlist, i, rank)
                 else:
                     Alist_temp = defaultdict(list)
 
-                comm.Barrier()
                 temp = comm.gather(Alist_temp, root = i)
                 if rank == i: ## it seems it will rewrite Alist, so replace it with temp
                     Alist = temp
@@ -275,12 +272,32 @@ class hide(hide_och_catch):
 
             #pre-calculate polynomial space for each element
             # actually one can calculate coeeficient matrices by solve soln = polyspace*coeff
+            """
+            self.A[etype] = etypecls(self.argv[0]).A1(tmsh).swapaxes(0,1)
+            print(rank, self.A[etype].shape, solno[etype].shape)
+            self.A[etype] = np.linalg.solve(self.A[etype], solno[etype])
+            print(self.A[etype].shape, solno[etype].shape)
+            """
+            """
             import h5py
             with h5py.File('Alist.zhenyang', 'r') as f:
                 for key in f.keys():
                     if key.split('_')[-1] == f'p{rank}':
                         self.A[etype] = np.array(f[key])
                 f.close()
+            """
+            """ this is right way to make full rank matrix but not working
+            cls = subclass_where(BaseShape, name=etype)
+            self.A[etype] = etypecls(self.argv[0]).A1(cls)
+            self.A[etype] = np.linalg.solve(self.A[etype], solno[etype])
+            """
+            import h5py
+            with h5py.File('Alist.zhenyang', 'r') as f:
+                for key in f.keys():
+                    if key.split('_')[-1] == f'p{rank}':
+                        self.A[etype] = np.array(f[key])
+                f.close()
+
 
 
 

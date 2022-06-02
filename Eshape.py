@@ -89,9 +89,13 @@ class HexType(Interpolation):
         #print('construct the face normal')
         norvec = vcenter - fcenter
         ptvec  = np.array([fcenter - pt for pt in pt_noncur])
+        #print(vcenter.shape, fcenter.shape,ptvec.shape,norvec.shape)
+
         # using einstien notition to do tensor product and extract diagonal entries
-        out    = np.einsum('ijk,lmqk->lijqm', norvec, ptvec)
-        out1   = np.einsum('kijji->kji',out)
+        #out    = np.einsum('ijk,lmqk->lijqm', norvec, ptvec)
+        #out1   = np.einsum('kijji->kji',out)
+        #out    = np.einsum('ijk,lmqk->lijqm', norvec, ptvec)
+        out1   = np.einsum('ijk,lijk->lji', norvec, ptvec)
         # is that a good idea to use this loop?
         index  = np.zeros(len(pt_noncur),dtype='int')
         for i in range(len(pt_noncur)):
@@ -132,7 +136,7 @@ class HexType(Interpolation):
 
     def A1(self, stdcls):
         msh = np.array(stdcls.std_ele(self.order))
-        
+
         temp = np.zeros([msh.shape[0],(self.order+1)**3])   #this is where the problem is, npt
 
         m = 0
