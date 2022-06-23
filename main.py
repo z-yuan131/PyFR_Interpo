@@ -12,9 +12,9 @@ def main():
     nmeshname = 'b'
 
 
-    sys.argv = [oininame,omeshname,solnname,nmeshname]
+    sys.argv = [oininame,omeshname,solnname,omeshname]
 
-    Interpo(sys.argv)
+    Interpo(sys.argv).getID()
 
     #print(oininame)
 
