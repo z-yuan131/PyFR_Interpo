@@ -45,7 +45,7 @@ class BaseInterpo(object):
         # type of meshes
         self.oldname = self.loadname(self.mesho)
         self.newname = self.loadname(self.meshn)
-        print(self.mesh_part_new)
+        #print(self.mesh_part_new)
 
 
         #print(self.lin)

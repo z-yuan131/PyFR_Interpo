@@ -2,24 +2,43 @@
 import numpy as np
 
 
-# First-order node numbers associated with each element face
-_fmap = {
-    'tri': {'line': [[0, 1], [1, 2], [2, 0]]},
-    'quad': {'line': [[0, 1], [1, 3], [3, 2], [2, 0]]},
-    'tet': {'tri': [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]},
-    'hex': {'quad': [[0, 1, 2, 3], [0, 1, 4, 5], [1, 2, 5, 6],
-                     [2, 3, 6, 7], [0, 3, 4, 7], [4, 5, 6, 7]]},
-    'pri': {'quad': [[0, 1, 3, 4], [1, 2, 4, 5], [0, 2, 3, 5]],
-            'tri': [[0, 1, 2], [3, 4, 5]]},
-    'pyr': {'quad': [[0, 1, 2, 3]],
-            'tri': [[0, 1, 4], [1, 2, 4], [2, 3, 4], [0, 3, 4]]}
-}
+def facenormal(fcenter, fnormal, pt_noncur):
+    #print('construct the face normal')
+    ptvec  = np.array([fcenter - pt for pt in pt_noncur])
+    #print(vcenter.shape, fcenter.shape,ptvec.shape,norvec.shape)
+
+    # using einstien notition to do tensor product and extract diagonal entries
+    out1   = np.einsum('ijk,lijk->lji', fnormal, ptvec)
+    # is that a good idea to use this loop?
+    index  = np.zeros(len(pt_noncur),dtype='int')
+    for i in range(len(pt_noncur)):
+        for j in range(fnormal.shape[1]):
+            if np.all(out1[i,j] < 10e-10) or np.all(out1[i,j] > -10e-10):
+                index[i] = j
+                break
+            #if there is a bug, it is because this point is not in the bounding box
+            index[i] = 10e10
+    return index
+
 
 class InterpolationShape(object):
     name = None
 
     def __init__(self, order):
         self.order = order
+
+        # First-order node numbers associated with each element face
+        self._fmap = {
+            'tri': {'line': [[0, order], [order, -1], [-1, 0]]},
+            'quad': {'line': [[0, order], [order, -1], [-1, -1-order], [-1-order, 0]]},
+            'tet': {'tri': [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]},
+            'hex': {'quad': [[0, 1, 2, 3], [0, 1, 4, 5], [1, 2, 5, 6],
+                             [2, 3, 6, 7], [0, 3, 4, 7], [4, 5, 6, 7]]},
+            'pri': {'quad': [[0, 1, 3, 4], [1, 2, 4, 5], [0, 2, 3, 5]],
+                    'tri': [[0, 1, 2], [3, 4, 5]]},
+            'pyr': {'quad': [[0, 1, 2, 3]],
+                    'tri': [[0, 1, 4], [1, 2, 4], [2, 3, 4], [0, 3, 4]]}
+        }
 
 class HexType(InterpolationShape):
     name = 'hex'
@@ -95,7 +114,7 @@ class HexType(InterpolationShape):
         print('check if curved')
 
 
-
+    """
     def facenormal(self, fcenter, vcenter, pt_noncur):
         #print('construct the face normal')
         norvec = vcenter - fcenter
@@ -117,6 +136,7 @@ class HexType(InterpolationShape):
                 #if there is a bug, it is because this point is not in the bounding box
                 index[i] = 10e10
         return index
+    """
 
 
     def facenormal_old(self, fcenter, vcenter, pt_noncur):
@@ -193,32 +213,16 @@ class QuadType(InterpolationShape):
 
     def pre_calc(self, mesh):
         # Volume center
-        vcenter = np.sum(mesh,axis=0)/self.npts()
+        #vcenter = np.sum(mesh,axis=0)/self.npts()
+        # corner points
+        cmesh = np.array([mesh[self._fmap['quad']['line'][i]] for i in range(4)])   # it has shape [Nedges, Npt in each edge, Nele, Nvars]
         # Face center
-        fcenter = np.array([np.sum(mesh[_fmap['quad']['line'][i]],axis=0) for i in range(4)]) / 2
-        return vcenter, fcenter
+        fcenter = np.sum(cmesh,axis=1) / 2
+        # Face face normal
+        fnormal = np.einsum('ijk,kl -> ijl',cmesh[:,1] - cmesh[:,0],np.array([[0,1],[-1,0]]))
 
-        return vcenter, fcenter
+        return fnormal, fcenter
 
-
-
-    def facenormal(self, fcenter, vcenter, pt_noncur):
-        #print('construct the face normal')
-        norvec = vcenter - fcenter
-        ptvec  = np.array([fcenter - pt for pt in pt_noncur])
-        # using einstien notition to do tensor product and extract diagonal entries
-        out    = np.einsum('ijk,lmqk->lijqm', norvec, ptvec)
-        out1   = np.einsum('kijji->kji',out)
-        # is that a good idea to use this loop?
-        index  = np.zeros(len(pt_noncur),dtype='int')
-        for i in range(len(pt_noncur)):
-            for j in range(len(vcenter)):
-                if np.all(out1[i,j] < 10e-10) or np.all(out1[i,j] > -10e-10):
-                    index[i] = j
-                    break
-                """if there is a bug, it is because this point is not in the bounding box"""
-                index[i] = 10000
-        return index
 
 
     def A1(self, msh, poly_order = None):
@@ -255,31 +259,13 @@ class TriType(InterpolationShape):
 
 
     def pre_calc(self, mesh):
-        # Volume center
-        vcenter = np.sum(mesh,axis=0)/self.npts()
+        # corner points
+        cmesh = np.array([mesh[self._fmap['tri']['line'][i]] for i in range(3)])   # it has shape [Nedges, Npt in each edge, Nele, Nvars]
         # Face center
-        fcenter = np.array([np.sum(mesh[_fmap['tri']['line'][i]],axis=0) for i in range(3)]) / 2
-        return vcenter, fcenter
-
-
-
-    def facenormal(self, fcenter, vcenter, pt_noncur):
-        #print('construct the face normal')
-        norvec = vcenter - fcenter
-        ptvec  = np.array([fcenter - pt for pt in pt_noncur])
-        # using einstien notition to do tensor product and extract diagonal entries
-        out    = np.einsum('ijk,lmqk->lijqm', norvec, ptvec)
-        out1   = np.einsum('kijji->kji',out)
-        # is that a good idea to use this loop?
-        index  = np.zeros(len(pt_noncur),dtype='int')
-        for i in range(len(pt_noncur)):
-            for j in range(len(vcenter)):
-                if np.all(out1[i,j] < 10e-10) or np.all(out1[i,j] > -10e-10):
-                    index[i] = j
-                    break
-                """if there is a bug, it is because this point is not in the bounding box"""
-                index[i] = 10000
-        return index
+        fcenter = np.sum(cmesh,axis=1) / 2
+        # Face face normal
+        fnormal = np.einsum('ikl,lm -> ikm',cmesh[:,1] - cmesh[:,0],np.array([[0,1],[-1,0]]))
+        return fnormal, fcenter
 
 
     def A1(self, msh, poly_order = None):
