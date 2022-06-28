@@ -9,10 +9,10 @@ def main():
     oininame = 'a'
     solnname = './files/solution.pyfrs'
     omeshname = './files/mesh.pyfrm'
-    nmeshname = 'b'
+    nmeshname = './files/mesh_new.pyfrm'
 
 
-    sys.argv = [oininame,omeshname,solnname,omeshname]
+    sys.argv = [oininame,omeshname,solnname,nmeshname]
 
     Interpo(sys.argv).getID()
 

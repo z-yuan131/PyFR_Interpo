@@ -34,31 +34,16 @@ class Interpo(BaseInterpo):
 
 
 
-
         # Get pts location
         misslist = defaultdict(list)
         storelist = defaultdict(list)
         sendlist = defaultdict(list)
-        for name in self.mesh_inf_new:
-            # Step 1: search node list inside current ranks
-            sendlist, storelist, misslist = self.sortpts(name, rank)
-            print(rank, len(sendlist), 'send', name)
-            print(rank, len(storelist), 'store', name)
-
-            Alist = defaultdict()
-
-            num = len(sendlist)
-            if num == self.meshn[name].shape[1]:
-                num = -1
-            num = comm.gather(num, root = 0)
-            num = comm.bcast(num, root = 0)
-            if np.min(num) == -1:
-                gather_rank = np.where(num == np.max(num))[0]
-                print(gather_rank)
-
-
-
-        return 0
+        for etype in self.mesh_part_new:
+            if self.mesh_part_new[etype][rank] != 0:
+                # Step 1: search node list inside current ranks
+                sendlist[f'{etype}_p{rank}'], storelist[f'{etype}_p{rank}'], misslist[f'{etype}_p{rank}'] = self.sortpts(etype, rank)
+                print(rank, len(sendlist[f'{etype}_p{rank}']), 'send')
+                print(rank, len(storelist[f'{etype}_p{rank}']), 'store')
 
         # STEP 2 MPI Send and Receive
         Alist = defaultdict()
@@ -139,7 +124,9 @@ class Interpo(BaseInterpo):
 
 
         for etype in self.mesh_part:
-            if self.mesh_part[etype][rank] != 0:
+            if self.mesh_part[etype][rank] == 0:
+                continue
+            else:
                 mname = f'{etype}_p{rank}'
 
                 # Pre-calculate the old mesh center of volume and center of face if applicatable
@@ -157,41 +144,36 @@ class Interpo(BaseInterpo):
                 #soln = np.rollaxis(self.soln[f'soln_{mname}'],2)
                 cls = subclass_where(BaseShape, name=etype)
 
-                # polynomial space
                 pspace_py = etypecls(mesh_order).A1(self.mesho[f'spt_{mname}']).swapaxes(0,1)
                 pspace_std = etypecls(mesh_order).A1(np.array(cls.std_ele(mesh_order)),soln_order)
-
-                # the first operator: mapping from physical space to standard space
                 self.mop0[f'spt_{etype}_p{rank}'] = np.einsum('ikj,jl->ikl',self.inv(pspace_py), pspace_std)
 
                 pspace_std = etypecls(soln_order).A1(np.array(cls.std_ele(soln_order)))
-                # the second operator: mapping from standard space to solution space
                 self.mop1[f'spt_{etype}_p{rank}'] = np.einsum('ij,jkl->ikl',self.inv(pspace_std), self.soln[f'soln_{mname}'])
                 #print(self.mop0[etype].shape,'shape')
 
-        # this function contents are public
+
         for name in self.mesh_inf_new:
-            #print(rank, name)
-            etype = name.split('_')[1]
-            etypecls = subclass_where(InterpolationShape, name=etype)
-            # physical space
-            self.pspace_py[name] = etypecls(mesh_order_new).A1(self.meshn[name]).swapaxes(0,1)
-            #print(self.pspace_py[etype].shape)
+            if name.split('_')[-1] == f'p{rank}':
+                etype = name.split('_')[1]
+                etypecls = subclass_where(InterpolationShape, name=etype)
+                self.pspace_py[etype] = etypecls(mesh_order_new).A1(self.meshn[f'spt_{etype}_p{rank}']).swapaxes(0,1)
+                #print(self.pspace_py[etype].shape)
 
-            self.soln_new[f'soln_{etype}_p{rank}'] = np.zeros([self.meshn[name].shape[0],self.meshn[name].shape[1],self.nvars])
+                self.soln_new[f'soln_{etype}_p{rank}'] = np.zeros([self.meshn[f'spt_{etype}_p{rank}'].shape[0],self.meshn[f'spt_{etype}_p{rank}'].shape[1],self.nvars])
+
+        #print(self.fcenter.keys())
 
 
-
-    def sortpts(self,name,rank):  #etypen is the new mesh type (looping in the default dictionary)
-        #name = f'spt_{etype}_p{rank}'
+    def sortpts(self,etype,rank):  #etypen is the new mesh type (looping in the default dictionary)
+        name = f'spt_{etype}_p{rank}'
 
         storelist = list()
         sendlist = list()
         misslist = list()
-
         for j in range(self.meshn[name].shape[1]):
-            #if rank == 0:
-            #    print((j+1)/self.meshn[name].shape[1])
+            if rank == 0:
+                print((j+1)/self.meshn[name].shape[1])
 
             # send one point to the function to decide if is in this partition
             # more prcisely, in which old element. new mesh has shape: [Npt, Nele, Nvar]
@@ -271,6 +253,8 @@ class Interpo(BaseInterpo):
 
 
         miss = list(miss)
+        if len(miss) > 0:
+            print('dfassssssssssssssssssssssssssssssssssssssssssssssssssssss')
         return temp,miss
 
 
@@ -330,12 +314,14 @@ class Interpo(BaseInterpo):
                     mesh_order = np.ceil(np.power(self.mesho[name].shape[0],1/2))
                 break
 
-        for name in self.mesh_inf_new:
-            if self.meshn[name].shape[-1] == 3:
-                mesh_order_new = np.ceil(np.power(self.meshn[name].shape[0],1/3))
-            else:
-                mesh_order_new = np.ceil(np.power(self.meshn[name].shape[0],1/2))
-            break
+        for etype in self.mesh_part_new:
+            if self.mesh_part_new[etype][rank] != 0:
+                name = f'spt_{etype}_p{rank}'
+                if self.meshn[name].shape[-1] == 3:
+                    mesh_order_new = np.ceil(np.power(self.meshn[name].shape[0],1/3))
+                else:
+                    mesh_order_new = np.ceil(np.power(self.meshn[name].shape[0],1/2))
+                break
 
         return int(mesh_order-1), soln_order, int(mesh_order_new-1)
 
