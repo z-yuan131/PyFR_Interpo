@@ -232,7 +232,7 @@ class QuadType(InterpolationShape):
         if msh.ndim == 1:
             temp = np.zeros([1,int(self.npts())])
         elif msh.ndim == 2:
-            temp = np.zeros([int(self.npts()),int(self.nsps(poly_order))])
+            temp = np.zeros([len(msh),int(self.nsps(poly_order))])
         else:
             temp = np.zeros([int(self.npts()),msh.shape[1],int(self.nsps(poly_order))])   #this is where the problem is, npt
 
@@ -275,7 +275,7 @@ class TriType(InterpolationShape):
         if msh.ndim == 1:
             temp = np.zeros([1,int(self.npts())])
         elif msh.ndim == 2:
-            temp = np.zeros([int(self.npts()),int(self.nsps(poly_order))])
+            temp = np.zeros([len(msh),int(self.nsps(poly_order))])
         else:
             temp = np.zeros([int(self.npts()),msh.shape[1],int(self.nsps(poly_order))])   #this is where the problem is, npt
 

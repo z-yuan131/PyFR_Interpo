@@ -42,77 +42,73 @@ class Interpo(BaseInterpo):
         for name in self.mesh_inf_new:
             # Step 1: search node list inside current ranks
             sendlist, storelist, misslist = self.sortpts(name, rank)
+
+
+
             print(rank, len(sendlist), 'send', name)
             print(rank, len(storelist), 'store', name)
 
             Alist = defaultdict()
 
-            num = len(sendlist)
-            if num == self.meshn[name].shape[1]:
-                num = -1
-            num = comm.gather(num, root = 0)
-            num = comm.bcast(num, root = 0)
-            if np.min(num) == -1:
-                gather_rank = np.where(num == np.max(num))[0]
-                print(gather_rank)
+            self.post_proc_info(storelist, name)
+
+            #_prefix,etype,part = name.split('_')
+
+            #print(etype,self.soln[f'soln_{etype}_{part}'].shape,self.soln_new[f'soln_{etype}_{part}'].shape)
+            #print(etype,np.max(self.soln_new[f'soln_{etype}_{part}'] - self.soln[f'soln_{etype}_{part}']))
+
+        #self.write_soln()
 
 
 
-        return 0
-
-        # STEP 2 MPI Send and Receive
-        Alist = defaultdict()
-        for i in range(size):
-            for key in sendlist.keys():
-                if len(sendlist[key]) > 0:
-                    revlist = comm.bcast(sendlist[key], root = i)
-
-                    catchlist = self.sortpts2(revlist, rank)
-
-                    if rank == i:
-                        if len(storelist) > 0:
-                            Alist_temp = self.group_A(storelist[key], i, rank)
-                        else:
-                            Alist_temp = defaultdict(list)
-                    elif len(catchlist) > 0:
-                        Alist_temp = self.group_A(catchlist, i, rank)
-                    else:
-                        Alist_temp = defaultdict(list)
-
-                    temp = comm.gather(Alist_temp, root = i)
-                    if rank == i:
-                        Alist[f'{etype}_p{i}'] = temp
-                else:
-                    Alist[f'{etype}_p{i}'] = self.group_A(storelist[key], i, rank)
-
-        #self.write_soln(self, Alist)
+    def write_soln(self):
+        import h5py
+        """
+        f = h5py.File('newfile.pyfrs','w')
+        #f['config'] = self.soln['config']
+        f['mesh_uuid'] = self.meshn['mesh_uuid']
+        for key in self.soln_new:
+            f[key] = self.soln_new[key]
+        f['stats'] = self.soln['stats']
+        f.close()
+        """
+        f = h5py.File('solution.pyfrs','a')
+        for key in self.soln_new:
+            a = f[key]
+            a[...] = self.soln_new[key]
+        f.close()
 
 
 
-    def write_soln(self, Alist, rank):
-        for i in range(len(Alist)):
-            if len(Alist[i]) > 0:
-                for eid, loccatch, sln in Alist[i]:
-                    self.soln_new[f'soln_{i}'][loccatch,eid] = sln
-
-
-
-    def group_A(self, catchlist, origin_rank, current_rank):
+    def post_proc_info(self, plist, name_new):
         sln = list()
-        name = f'p{origin_rank}_->_p{current_rank}'
+        #name = f'p{origin_rank}_->_p{current_rank}'
 
         # info[0] is eid_new, info[1] is loccatch, info[2] is index, info[3] is pspace_py
-        info = list(zip(*catchlist))
+        info = list(zip(*plist))
         #print(info)
         for i in range(len(info[0])):
-            for name in info[2][i].keys():
-                op = np.einsum('ijk,kli->ijl',self.mop0[name][info[2][i][name]],self.mop1[name][...,info[2][i][name]])
-                #print(info[2][i][name],op.shape)
-            #index = list(zip(*index))
+            for name in info[1][i].keys():
+                # op: Nele,
+                #print(info[2][i][name],info[1][i][name],self.mop[name].shape)
+                #index = list(zip(*index))
+                _prefix,etype,part = name.split('_')
+                _prefix,etype_new,part_new = name_new.split('_')
 
-                #sln.append(list((info[0][i], info[1][i], info[3] @ self.mop0[index[0]][:,index[1]] @ self.mop1[index[0]][:,index[1]])))
+                #sln.append(list((info[0][i], info[1][i], info[3] @ op)))
 
-        return list()
+                #print(name,info[0][i],info[1][i][name],info[2][i][name])
+
+                #print(self.pspace_py[name_new][info[0][i],info[1][i][name]].shape, self.mop[name][info[1][i][name]].shape)
+                etypecls = subclass_where(InterpolationShape, name=etype)
+                #print(self.meshn[name_new][info[1][i][name],info[0][i]].shape)
+                pspace_py = etypecls(self.mesh_order).A1(self.meshn[name_new][info[1][i][name],info[0][i]])
+                #print(pspace_py.shape,self.mop[name][info[1][i][name]].shape,etype)
+
+                #print(list(self.soln_new.keys()))
+                #print(etype_new)
+                self.soln_new[f'soln_{etype_new}_{part_new}'][info[1][i][name],info[0][i]] = np.einsum('ij,ijk->ik',pspace_py, self.mop[name][info[1][i][name]])
+
 
 
     def write_pyfrs(self, data):
@@ -132,10 +128,11 @@ class Interpo(BaseInterpo):
         self.pspace_py = defaultdict()
         self.soln_new = defaultdict()
 
-        self.mop0 = defaultdict()
-        self.mop1 = defaultdict()
+        self.mop = defaultdict()
 
         mesh_order, soln_order, mesh_order_new = self.order_check(rank)
+
+        self.mesh_order = mesh_order
 
 
         for etype in self.mesh_part:
@@ -162,20 +159,23 @@ class Interpo(BaseInterpo):
                 pspace_std = etypecls(mesh_order).A1(np.array(cls.std_ele(mesh_order)),soln_order)
 
                 # the first operator: mapping from physical space to standard space
-                self.mop0[f'spt_{etype}_p{rank}'] = np.einsum('ikj,jl->ikl',self.inv(pspace_py), pspace_std)
+                mop0 = np.einsum('ikj,jl->ikl',self.inv(pspace_py), pspace_std)
 
                 pspace_std = etypecls(soln_order).A1(np.array(cls.std_ele(soln_order)))
                 # the second operator: mapping from standard space to solution space
-                self.mop1[f'spt_{etype}_p{rank}'] = np.einsum('ij,jkl->ikl',self.inv(pspace_std), self.soln[f'soln_{mname}'])
-                #print(self.mop0[etype].shape,'shape')
+                mop1 = np.einsum('ij,jkl->ikl',self.inv(pspace_std), self.soln[f'soln_{mname}'])
+
+                self.mop[f'spt_{etype}_p{rank}'] = np.einsum('ijk,kli->ijl',mop0,mop1)
+
+                print(self.mop[f'spt_{etype}_p{rank}'].shape,'mopshape')
 
         # this function contents are public
         for name in self.mesh_inf_new:
             #print(rank, name)
             etype = name.split('_')[1]
-            etypecls = subclass_where(InterpolationShape, name=etype)
+            #etypecls = subclass_where(InterpolationShape, name=etype)
             # physical space
-            self.pspace_py[name] = etypecls(mesh_order_new).A1(self.meshn[name]).swapaxes(0,1)
+            #self.pspace_py[name] = etypecls(mesh_order_new).A1(self.meshn[name]).swapaxes(0,1)
             #print(self.pspace_py[etype].shape)
 
             self.soln_new[f'soln_{etype}_p{rank}'] = np.zeros([self.meshn[name].shape[0],self.meshn[name].shape[1],self.nvars])
@@ -196,22 +196,20 @@ class Interpo(BaseInterpo):
             # send one point to the function to decide if is in this partition
             # more prcisely, in which old element. new mesh has shape: [Npt, Nele, Nvar]
 
-            index,locmiss = self.loc(self.meshn[name][:,j],rank)
+            index,loccatch,locmiss = self.loc(self.meshn[name][:,j],rank)
 
 
-            full_loss = list(range(self.meshn[name].shape[0]))
-            loccatch = list(set(full_loss).difference(set(locmiss)))
 
-            if len(locmiss) > 0 and len(loccatch) > 0:
+            if len(locmiss) == self.meshn[name].shape[0]:
+                misslist.append(list(locmiss))
+                sendlist.append(list((j,self.meshn[name][:,j])))
+            elif len(locmiss) == 0:
+                misslist.append(list())
+                storelist.append(list((j,loccatch,index)))
+            else:
                 storelist.append(list((j,loccatch,index)))
                 misslist.append(list(locmiss))
                 sendlist.append(list((j,self.meshn[name][locmiss,j])))
-            elif len(locmiss) > 0:
-                misslist.append(list(locmiss))
-                sendlist.append(list((j,self.meshn[name][:,j])))
-            else:
-                misslist.append(list())
-                storelist.append(list((j,loccatch,index)))
 
 
 
@@ -232,7 +230,7 @@ class Interpo(BaseInterpo):
             #print(rank, loccatch)
             if len(loccatch) > 0:
                 #Alist = self.findA(index)
-                catchlist.append(list((eid,loccatch,index,pspace[loccatch])))
+                catchlist.append(list((eid,loccatch,index)))
 
         return catchlist
 
@@ -242,36 +240,49 @@ class Interpo(BaseInterpo):
         # idea first sort cloest qo element center, among them sort the cloest points
         # in case of the boundary of the different type of mesh, we have to loop dofferent type of mesh
         index = defaultdict()
-        miss = set(list(range(len(ele))))
-        temp = defaultdict()
+        miss = list(range(len(ele)))
+        temp1 = defaultdict()
+        temp2 = defaultdict()
 
         for etype in self.mesh_part:
             if self.mesh_part[etype][rank] != 0:
                 name = f'spt_{etype}_p{rank}'
 
                 # get bounding box for that element
-                index_ele = self.box(self.mesho[name],ele)
+                index_ele = self.box(self.mesho[name],ele[miss].T)
 
                 if len(index_ele) > 0:
-                    index_tp = self.checkposition(index_ele, ele, name)
+                    index_tp = self.checkposition(index_ele, ele[miss], name)
 
                     try:
                         index[etype] = index_ele[index_tp]
-                        locmiss = list()
+                        temp1[name] = index[etype]
+                        temp2[name] = miss
+
+                        miss = list()
+                        break
                     # a pssibility that point is in another partition or other etypes
                     except IndexError:
-                        locmiss = list(np.where(index_tp >= len(index_ele))[0])
-                        index_tp[locmiss] = 0
+                        locmiss = [miss[i] for i in np.where(index_tp >= len(index_ele))[0]]
+                        if locmiss == miss:
+                            continue
+
+                        loccatch = list(set(miss).difference(set(locmiss)))
+                        index_tp = index_tp[loccatch]
                         index[etype] = index_ele[index_tp]
 
-                    # gather all locmiss and assemble store matrix
-                    miss = miss.intersection(set(locmiss))
+                        temp1[name] = index[etype]
+                        temp2[name] = loccatch
 
-                    temp[name] = [index[etype][i] for i in range(len(index[etype])) if i not in locmiss]
+                        # gather all locmiss and assemble store matrix
+                        #miss = set(miss).intersection(set(locmiss))
+                        miss = locmiss
+
+                        if len(list(miss)) == 0:
+                            break
 
 
-        miss = list(miss)
-        return temp,miss
+        return temp1,temp2,miss
 
 
     def bounding_box(self, x, newx):
@@ -289,10 +300,10 @@ class Interpo(BaseInterpo):
 
     def box(self, msho, ele):
 
-        index = self.bounding_box(msho[...,0],ele[:,0])
+        index = self.bounding_box(msho[...,0],ele[0])
         for dim in range(1, self.ndims+1):
             if index.size > 0 and dim < self.ndims:
-                index = index[self.bounding_box(msho[:,index,dim],ele[:,dim])]
+                index = index[self.bounding_box(msho[:,index,dim],ele[dim])]
             elif index.size > 0 and dim == self.ndims:
                 return index
             else:
