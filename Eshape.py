@@ -17,7 +17,7 @@ def facenormal(fcenter, fnormal, pt_noncur):
                 index[i] = j
                 break
             #if there is a bug, it is because this point is not in the bounding box
-            index[i] = 10e10
+            index[i] = 1e8
     return index
 
 

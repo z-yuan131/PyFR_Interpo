@@ -7,7 +7,7 @@ from interpo import Interpo
 def main():
 
     oininame = 'a'
-    solnname = './files/solution.pyfrs'
+    solnname = './files/solution2.pyfrs'
     omeshname = './files/mesh.pyfrm'
     nmeshname = './files/mesh_new.pyfrm'
 

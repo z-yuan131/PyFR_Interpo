@@ -43,7 +43,7 @@ class Interpo(BaseInterpo):
             # Step 1: search node list inside current ranks
             sendlist, storelist, misslist = self.sortpts(name, rank)
 
-
+            return 0
 
             print(rank, len(sendlist), 'send', name)
             print(rank, len(storelist), 'store', name)
@@ -199,6 +199,9 @@ class Interpo(BaseInterpo):
             index,loccatch,locmiss = self.loc(self.meshn[name][:,j],rank)
 
 
+            if len(locmiss) != 0:
+                #print(locmiss, index)
+                return 0,0,0
 
             if len(locmiss) == self.meshn[name].shape[0]:
                 misslist.append(list(locmiss))
@@ -248,6 +251,7 @@ class Interpo(BaseInterpo):
             if self.mesh_part[etype][rank] != 0:
                 name = f'spt_{etype}_p{rank}'
 
+
                 # get bounding box for that element
                 index_ele = self.box(self.mesho[name],ele[miss].T)
 
@@ -258,17 +262,18 @@ class Interpo(BaseInterpo):
                         index[etype] = index_ele[index_tp]
                         temp1[name] = index[etype]
                         temp2[name] = miss
-
+                        print(name, miss, len(index_tp))
                         miss = list()
+
                         break
+
                     # a pssibility that point is in another partition or other etypes
                     except IndexError:
-                        locmiss = [miss[i] for i in np.where(index_tp >= len(index_ele))[0]]
-                        if locmiss == miss:
-                            continue
+                        loccatch = [miss[i] for i in np.where(index_tp != 1e8)[0]]
+                        print(loccatch)
 
-                        loccatch = list(set(miss).difference(set(locmiss)))
-                        index_tp = index_tp[loccatch]
+                        #print(index_ele,index_tp,miss,loccatch)
+                        index_tp = index_tp[[miss.index(i) for i in loccatch]]
                         index[etype] = index_ele[index_tp]
 
                         temp1[name] = index[etype]
@@ -276,12 +281,13 @@ class Interpo(BaseInterpo):
 
                         # gather all locmiss and assemble store matrix
                         #miss = set(miss).intersection(set(locmiss))
-                        miss = locmiss
+                        miss = list(set(miss).difference(set(loccatch)))
+
 
                         if len(list(miss)) == 0:
                             break
-
-
+        if len(miss) != 0:
+            print(temp1, temp2, miss)
         return temp1,temp2,miss
 
 
