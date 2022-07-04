@@ -218,9 +218,12 @@ class QuadType(InterpolationShape):
         cmesh = np.array([mesh[self._fmap['quad']['line'][i]] for i in range(4)])   # it has shape [Nedges, Npt in each edge, Nele, Nvars]
         # Face center
         fcenter = np.sum(cmesh,axis=1) / 2
-        # Face face normal
-        fnormal = np.einsum('ijk,kl -> ijl',cmesh[:,1] - cmesh[:,0],np.array([[0,1],[-1,0]]))
+        # element plane normal
+        surnorm = np.array([0,0,1])
+        # line norm
+        fnormal = np.cross(cmesh[:,1] - cmesh[:,0] , surnorm)[...,:2]
 
+        #print(np.einsum('ijk,ijk -> ij',fnormal, cmesh[:,1] - cmesh[:,0]) )
         return fnormal, fcenter
 
 
@@ -263,8 +266,10 @@ class TriType(InterpolationShape):
         cmesh = np.array([mesh[self._fmap['tri']['line'][i]] for i in range(3)])   # it has shape [Nedges, Npt in each edge, Nele, Nvars]
         # Face center
         fcenter = np.sum(cmesh,axis=1) / 2
-        # Face face normal
-        fnormal = np.einsum('ikl,lm -> ikm',cmesh[:,1] - cmesh[:,0],np.array([[0,1],[-1,0]]))
+        # element plane normal
+        surnorm = np.array([0,0,1])
+        # line norm
+        fnormal = np.cross(cmesh[:,1] - cmesh[:,0] , surnorm)[...,:2]
         return fnormal, fcenter
 
 

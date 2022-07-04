@@ -29,6 +29,11 @@ class Interpo(BaseInterpo):
         rank = comm.Get_rank()
         size = comm.Get_size()
 
+        # Check if mpi ranks are compatible
+        if size != np.max(np.array([len(self.mesh_part[etype]) for etype in self.mesh_part])):
+            raise ValueError('Backgroud mesh and solution do not have same partition number as MPI ranks.')
+
+
         # Get operators
         self.ops(rank)
 
@@ -36,21 +41,22 @@ class Interpo(BaseInterpo):
 
 
         # Get pts location
-        misslist = defaultdict(list)
-        storelist = defaultdict(list)
-        sendlist = defaultdict(list)
+        #misslist = defaultdict(list)
+        #storelist = defaultdict(list)
+        #sendlist = defaultdict(list)
         for name in self.mesh_inf_new:
             # Step 1: search node list inside current ranks
             sendlist, storelist, misslist = self.sortpts(name, rank)
 
-            return 0
+            #return 0
 
             print(rank, len(sendlist), 'send', name)
             print(rank, len(storelist), 'store', name)
+            #print(rank, len(storelist), 'store', name)
 
-            Alist = defaultdict()
+            #Alist = defaultdict()
 
-            self.post_proc_info(storelist, name)
+            #self.post_proc_info(storelist, name)
 
             #_prefix,etype,part = name.split('_')
 
@@ -58,6 +64,9 @@ class Interpo(BaseInterpo):
             #print(etype,np.max(self.soln_new[f'soln_{etype}_{part}'] - self.soln[f'soln_{etype}_{part}']))
 
         #self.write_soln()
+
+
+
 
 
 
@@ -136,6 +145,7 @@ class Interpo(BaseInterpo):
 
 
         for etype in self.mesh_part:
+            print(self.mesh_part)
             if self.mesh_part[etype][rank] != 0:
                 mname = f'{etype}_p{rank}'
 
@@ -146,7 +156,7 @@ class Interpo(BaseInterpo):
 
                 self.fnormal[f'spt_{mname}'], self.fcenter[f'spt_{mname}'] = etypecls(mesh_order).pre_calc(self.mesho[f'spt_{mname}'])
 
-                print(self.fnormal[f'spt_{mname}'].shape, self.fcenter[f'spt_{mname}'].shape)
+                #print(self.fnormal[f'spt_{mname}'].shape, self.fcenter[f'spt_{mname}'].shape)
 
 
                 # Pre-calculate polynomial space for each element
@@ -167,7 +177,7 @@ class Interpo(BaseInterpo):
 
                 self.mop[f'spt_{etype}_p{rank}'] = np.einsum('ijk,kli->ijl',mop0,mop1)
 
-                print(self.mop[f'spt_{etype}_p{rank}'].shape,'mopshape')
+                #print(self.mop[f'spt_{etype}_p{rank}'].shape,'mopshape')
 
         # this function contents are public
         for name in self.mesh_inf_new:
@@ -185,9 +195,9 @@ class Interpo(BaseInterpo):
     def sortpts(self,name,rank):  #etypen is the new mesh type (looping in the default dictionary)
         #name = f'spt_{etype}_p{rank}'
 
-        storelist = list()
-        sendlist = list()
-        misslist = list()
+        storelist = list()#defaultdict()
+        sendlist = defaultdict()
+        catchlist = defaultdict()
 
         for j in range(self.meshn[name].shape[1]):
             #if rank == 0:
@@ -196,13 +206,13 @@ class Interpo(BaseInterpo):
             # send one point to the function to decide if is in this partition
             # more prcisely, in which old element. new mesh has shape: [Npt, Nele, Nvar]
 
-            index,loccatch,locmiss = self.loc(self.meshn[name][:,j],rank)
+            index,loccatch,locmiss = self.loc(self.meshn[name][:,j],rank,j)
 
 
-            if len(locmiss) != 0:
-                #print(locmiss, index)
-                return 0,0,0
-
+            #if len(locmiss) != 0:
+            #    print(locmiss, index)
+            #    return 0,0,0
+            """
             if len(locmiss) == self.meshn[name].shape[0]:
                 misslist.append(list(locmiss))
                 sendlist.append(list((j,self.meshn[name][:,j])))
@@ -213,6 +223,16 @@ class Interpo(BaseInterpo):
                 storelist.append(list((j,loccatch,index)))
                 misslist.append(list(locmiss))
                 sendlist.append(list((j,self.meshn[name][locmiss,j])))
+            """
+            if len(locmiss) == self.meshn[name].shape[0]:
+                sendlist[j] = locmiss
+            elif len(locmiss) == 0:
+                catchlist[j] = list(range(len(self.meshn[name][:,j])))
+                storelist.append(list((j,loccatch,index)))
+            else:
+                storelist.append(list((j,loccatch,index)))
+                catchlist[j] = list(set(locmiss).difference(set(list(range(len(self.meshn[name][:,j]))))))
+                sendlist[j] = np.array(locmiss)
 
 
 
@@ -220,7 +240,7 @@ class Interpo(BaseInterpo):
 
         #print(len(sendlist[f'{etypen}_p{rank}']),len(storelist[f'{etypen}_p{rank}']),self.mshn[etypen].shape[1])
 
-        return sendlist, storelist, misslist
+        return sendlist, storelist, catchlist
 
     def sortpts2(self, revlist, rank):
         catchlist = list()
@@ -239,13 +259,12 @@ class Interpo(BaseInterpo):
 
 
 
-    def loc(self, ele, rank):
+    def loc(self, ele, rank,j):
         # idea first sort cloest qo element center, among them sort the cloest points
         # in case of the boundary of the different type of mesh, we have to loop dofferent type of mesh
         index = defaultdict()
         miss = list(range(len(ele)))
-        temp1 = defaultdict()
-        temp2 = defaultdict()
+        catch = defaultdict()
 
         for etype in self.mesh_part:
             if self.mesh_part[etype][rank] != 0:
@@ -259,36 +278,37 @@ class Interpo(BaseInterpo):
                     index_tp = self.checkposition(index_ele, ele[miss], name)
 
                     try:
-                        index[etype] = index_ele[index_tp]
-                        temp1[name] = index[etype]
-                        temp2[name] = miss
-                        print(name, miss, len(index_tp))
+                        index[name] = index_ele[index_tp]
+                        catch[name] = miss
+                        #print(name, miss, len(index_tp))
                         miss = list()
 
-                        break
+                        return index,catch,miss
 
                     # a pssibility that point is in another partition or other etypes
                     except IndexError:
                         loccatch = [miss[i] for i in np.where(index_tp != 1e8)[0]]
-                        print(loccatch)
+                        #print(rank, loccatch)
+                        if len(loccatch) > 0:
+                            #print(index_ele,index_tp,miss,loccatch)
+                            index_tp = index_tp[[miss.index(i) for i in loccatch]]
+                            index[name] = index_ele[index_tp]
 
-                        #print(index_ele,index_tp,miss,loccatch)
-                        index_tp = index_tp[[miss.index(i) for i in loccatch]]
-                        index[etype] = index_ele[index_tp]
+                            catch[name] = loccatch
 
-                        temp1[name] = index[etype]
-                        temp2[name] = loccatch
-
-                        # gather all locmiss and assemble store matrix
-                        #miss = set(miss).intersection(set(locmiss))
-                        miss = list(set(miss).difference(set(loccatch)))
+                            # gather all locmiss and assemble store matrix
+                            #miss = set(miss).intersection(set(locmiss))
+                            miss = list(set(miss).difference(set(loccatch)))
 
 
-                        if len(list(miss)) == 0:
-                            break
+                            if len(miss) == 0:
+                                break
+
+                                #temp2[name] = list(set(list(range(len(ele)))).difference(set(miss)))
+                        #raise ValueError
         if len(miss) != 0:
-            print(temp1, temp2, miss)
-        return temp1,temp2,miss
+            print(name,miss, catch,index,j)
+        return index,catch,miss
 
 
     def bounding_box(self, x, newx):
@@ -301,7 +321,7 @@ class Interpo(BaseInterpo):
         bxmi = np.searchsorted(xmin,newx,sorter=xminindex)
 
         index = np.arange(np.min(bxma),np.max(bxmi),1)
-        return xminindex[index]
+        return np.append(xmaxindex[index],xminindex[index])
 
 
     def box(self, msho, ele):
@@ -311,7 +331,7 @@ class Interpo(BaseInterpo):
             if index.size > 0 and dim < self.ndims:
                 index = index[self.bounding_box(msho[:,index,dim],ele[dim])]
             elif index.size > 0 and dim == self.ndims:
-                return index
+                return np.array(list(set(list(index))))
             else:
                 return list()
 
