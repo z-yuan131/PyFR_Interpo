@@ -50,21 +50,34 @@ class Interpo(BaseInterpo):
 
             #return 0
 
-            print(rank, len(sendlist), 'send', name)
-            print(rank, len(storelist), 'store', name)
+            #print(rank, len(sendlist), 'send', name)
+            #print(rank, len(storelist), 'store', name)
             #print(rank, len(storelist), 'store', name)
 
             #Alist = defaultdict()
 
-            #self.post_proc_info(storelist, name)
+            self.post_proc(storelist, name)
 
             #_prefix,etype,part = name.split('_')
 
             #print(etype,self.soln[f'soln_{etype}_{part}'].shape,self.soln_new[f'soln_{etype}_{part}'].shape)
             #print(etype,np.max(self.soln_new[f'soln_{etype}_{part}'] - self.soln[f'soln_{etype}_{part}']))
 
-        #self.write_soln()
+        self.write_soln()
 
+
+    def post_proc(self, storelist, name):
+        _prefix, _etypen, _part = name.split('_')
+        temp = defaultdict(list)
+        #print(storelist)
+        for eid, catchlist, index in storelist:
+            for etype_name in catchlist:
+                # Import relevant class
+                cls = subclass_where(InterpolationShape, name=etype_name.split('_')[1])
+                # Polynomial space
+                pspace_py = cls(self.mesh_order).A1(self.meshn[name][catchlist[etype_name],eid])
+                # Rebuild solution
+                self.soln_new[f'soln_{_etypen}_{_part}'][catchlist[etype_name],:,eid] = np.einsum('ij,ijk->ik',pspace_py, self.mop[etype_name][index[etype_name]])
 
 
 
@@ -72,19 +85,16 @@ class Interpo(BaseInterpo):
 
     def write_soln(self):
         import h5py
-        """
+        #self.cfg = Inifile(self.soln['config'])
+        #self.stats = Inifile(self.soln['stats'])
+        self.cfg.set('solver','order',self.mesh_order_new)
+
         f = h5py.File('newfile.pyfrs','w')
-        #f['config'] = self.soln['config']
+        f['config'] = self.cfg.tostr()
         f['mesh_uuid'] = self.meshn['mesh_uuid']
         for key in self.soln_new:
             f[key] = self.soln_new[key]
-        f['stats'] = self.soln['stats']
-        f.close()
-        """
-        f = h5py.File('solution.pyfrs','a')
-        for key in self.soln_new:
-            a = f[key]
-            a[...] = self.soln_new[key]
+        f['stats'] = self.stats.tostr()
         f.close()
 
 
@@ -142,6 +152,7 @@ class Interpo(BaseInterpo):
         mesh_order, soln_order, mesh_order_new = self.order_check(rank)
 
         self.mesh_order = mesh_order
+        self.mesh_order_new = mesh_order_new
 
 
         for etype in self.mesh_part:
@@ -188,7 +199,7 @@ class Interpo(BaseInterpo):
             #self.pspace_py[name] = etypecls(mesh_order_new).A1(self.meshn[name]).swapaxes(0,1)
             #print(self.pspace_py[etype].shape)
 
-            self.soln_new[f'soln_{etype}_p{rank}'] = np.zeros([self.meshn[name].shape[0],self.meshn[name].shape[1],self.nvars])
+            self.soln_new[f'soln_{etype}_p{rank}'] = np.zeros([self.meshn[name].shape[0],self.nvars,self.meshn[name].shape[1]])
 
 
 
@@ -196,8 +207,9 @@ class Interpo(BaseInterpo):
         #name = f'spt_{etype}_p{rank}'
 
         storelist = list()#defaultdict()
-        sendlist = defaultdict()
-        catchlist = defaultdict()
+        sendlist = list()#defaultdict()
+        catchlist = list()#defaultdict()
+        misslist = list()
 
         for j in range(self.meshn[name].shape[1]):
             #if rank == 0:
@@ -212,7 +224,7 @@ class Interpo(BaseInterpo):
             #if len(locmiss) != 0:
             #    print(locmiss, index)
             #    return 0,0,0
-            """
+
             if len(locmiss) == self.meshn[name].shape[0]:
                 misslist.append(list(locmiss))
                 sendlist.append(list((j,self.meshn[name][:,j])))
@@ -233,7 +245,7 @@ class Interpo(BaseInterpo):
                 storelist.append(list((j,loccatch,index)))
                 catchlist[j] = list(set(locmiss).difference(set(list(range(len(self.meshn[name][:,j]))))))
                 sendlist[j] = np.array(locmiss)
-
+            """
 
 
 
@@ -272,7 +284,7 @@ class Interpo(BaseInterpo):
 
 
                 # get bounding box for that element
-                index_ele = self.box(self.mesho[name],ele[miss].T)
+                index_ele = self.box(self.mesho[name],ele[miss].T, j)
 
                 if len(index_ele) > 0:
                     index_tp = self.checkposition(index_ele, ele[miss], name)
@@ -306,10 +318,9 @@ class Interpo(BaseInterpo):
 
                                 #temp2[name] = list(set(list(range(len(ele)))).difference(set(miss)))
                         #raise ValueError
-        if len(miss) != 0:
-            print(name,miss, catch,index,j)
+        #if len(miss) != 0:
+        #    print(name,miss, catch,index,j)
         return index,catch,miss
-
 
     def bounding_box(self, x, newx):
 
@@ -317,21 +328,23 @@ class Interpo(BaseInterpo):
         xmaxindex = np.argsort(xmax)
         xmin = np.amin(x,axis=0)
         xminindex = np.argsort(xmin)
-        bxma = np.searchsorted(xmax,newx,sorter=xmaxindex)
-        bxmi = np.searchsorted(xmin,newx,sorter=xminindex)
+        bxma = np.searchsorted(xmax,np.min(newx),sorter=xmaxindex)
+        bxmi = np.searchsorted(xmin,np.max(newx),sorter=xminindex)
 
-        index = np.arange(np.min(bxma),np.max(bxmi),1)
-        return np.append(xmaxindex[index],xminindex[index])
+        #index1 = list(np.arange(bxma,len(xmaxindex),1))
+        #index2 = list(np.arange(0,bxmi,1))
+        index = np.array(list(set(xmaxindex[bxma:]).intersection(set(xminindex[:bxmi]))),dtype=np.int64)
+        #print(index)
+        return index
 
-
-    def box(self, msho, ele):
+    def box(self, msho, ele, j):
 
         index = self.bounding_box(msho[...,0],ele[0])
-        for dim in range(1, self.ndims+1):
-            if index.size > 0 and dim < self.ndims:
+        for dim in range(1, self.ndims + 1):
+            if len(index) > 0 and dim < self.ndims:
                 index = index[self.bounding_box(msho[:,index,dim],ele[dim])]
-            elif index.size > 0 and dim == self.ndims:
-                return np.array(list(set(list(index))))
+            elif len(index) > 0 and dim == self.ndims:
+                return index
             else:
                 return list()
 
