@@ -22,6 +22,8 @@ class BaseInterpo(object):
         # Load the configuration and stats files
         self.cfg = Inifile(self.soln['config'])
         self.stats = Inifile(self.soln['stats'])
+        self.order = self.cfg.getint('solver','order')
+        self.dtype = np.dtype(self.cfg.get('backend','precision')).type
 
         # Data file prefix (defaults to soln for backwards compatibility)
         self.dataprefix = self.stats.get('data', 'prefix', 'soln')
