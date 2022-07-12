@@ -38,8 +38,6 @@ class Interpo(BaseInterpo):
         # Get operators
         self.ops(rank)
 
-        #return 0
-
 
         # Get pts location
         #misslist = defaultdict(list)
@@ -48,6 +46,7 @@ class Interpo(BaseInterpo):
         for name in self.mesh_inf_new:
             # Step 1: search node list inside current ranks
             sendlist, storelist, misslist = self.sortpts(name, rank)
+
 
             #return 0
 
@@ -63,7 +62,7 @@ class Interpo(BaseInterpo):
 
             #print(etype,self.soln[f'soln_{etype}_{part}'].shape,self.soln_new[f'soln_{etype}_{part}'].shape)
             #print(etype,np.max(self.soln_new[f'soln_{etype}_{part}'] - self.soln[f'soln_{etype}_{part}']))
-        #self.post_proc_soln()
+        self.post_proc_soln()
 
         self.write_soln()
 
@@ -82,12 +81,16 @@ class Interpo(BaseInterpo):
                 #self.soln_new[f'soln_{_etypen}_{_part}'][catchlist[etype_name],:,eid] = np.einsum('ij,ijk->ik',pspace_py, self.mop[etype_name][index[etype_name]])
                 _prefix,_etypeo,_parto = old_name.split('_')
 
-                poly_space = self._get_mesh_op(_etypeo, self.soln[f'soln_{_etypeo}_{_parto}'].shape[0], self.meshn[new_name][catchlist[old_name],eid])
-                #print(poly_space.shape)
+                poly_space = self._get_polyspace(_etypeo, self.soln[f'soln_{_etypeo}_{_parto}'].shape[0], self.meshn[new_name][catchlist[old_name],eid]).swapaxes(0,1)
+                #print(poly_space.shape, self.mop[old_name][index[old_name]].shape)
 
-                #print(poly_space.shape, self.mop[old_name][old_name].shape, self.soln[f'soln_{_etypeo}_{_parto}'][...,index[old_name]].shape)
-                #self.soln_new[f'soln_{_etypen}_{_part}'][catchlist[old_name],:,eid] = poly_space @ self.mop[old_name][index[old_name]] @ self.soln[f'soln_{_etypeo}_{_parto}'][...,eid]
                 self.soln_new[f'soln_{_etypen}_{_part}'][catchlist[old_name],:,eid] = np.einsum('ij,ijk -> ik', poly_space, self.mop[old_name][index[old_name]])
+
+                if np.max(self.soln_new[f'soln_{_etypen}_{_part}'][catchlist[old_name],:,eid]) > 1000:
+                    print(eid, index[old_name])
+                #print(np.max(self.soln_new[f'soln_{_etypen}_{_part}']), np.max(poly_space), np.max(self.mop[old_name][index[old_name]]))
+                #print(index[old_name], catchlist[old_name], eid, new_name, old_name)
+                #raise ValueError
 
     def post_proc_soln(self):
         for key in self.soln_new:
@@ -98,9 +101,7 @@ class Interpo(BaseInterpo):
 
     def write_soln(self):
         import h5py
-        #self.cfg = Inifile(self.soln['config'])
-        #self.stats = Inifile(self.soln['stats'])
-        self.cfg.set('solver','order',self.order)
+        self.cfg.set('solver','order',self.new_mesh_order)
 
         f = h5py.File('newfile.pyfrs','w')
         f['config'] = self.cfg.tostr()
@@ -138,6 +139,10 @@ class Interpo(BaseInterpo):
         shape = self._get_shape(name, nspts, self.cfg)
         return shape.ubasis.nodal_basis_at(svpts).astype(self.dtype)
 
+    def _get_ortho_basis(self, name, nspts, svpts):
+        shape = self._get_shape(name, nspts, self.cfg)
+        return shape.sbasis.ortho_basis_at(svpts).astype(self.dtype)
+
     def _get_npts(self, name, order):
         return self._get_shape(name, 0, self.cfg).nspts_from_order(order)
 
@@ -145,20 +150,27 @@ class Interpo(BaseInterpo):
         return self._get_shape(name, nspts, self.cfg).order_from_nspts(nspts)
 
     def _get_soln_op_2(self, name, nspts):
-        print(name)
-
         cfg = Inifile(self.soln['config'])
+
         order = self._get_order(name, nspts) - 1
 
-        cfg.set('solver','order',int(order))
-
         nspts = self._get_npts(name, order)
-        svpts = self._get_std_ele(order,nspts)
+        svpts = self._get_std_ele(name,nspts)
+        cfg.set('solver','order',order)
 
-        print(nspts, svpts)
+        self.new_mesh_order = order
+
         shape = self._get_shape(name, nspts, cfg)
-
         return shape.ubasis.nodal_basis_at(svpts).astype(self.dtype)
+
+    def _get_polyspace(self, name, nspts, mesh, Jacobi = False):
+        if Jacobi and mesh.ndim == 3:
+            return self._get_ortho_basis(name, nspts, mesh.reshape(-1,self.ndims)).reshape(nspts,-1,nspts).swapaxes(0,1)
+        elif Jacobi and mesh.ndim == 2:
+            return self._get_ortho_basis(name, nspts, mesh.reshape(-1,self.ndims)).swapaxes(0,1)
+        else:
+            etypecls = subclass_where(InterpolationShape, name=name)
+            return etypecls(self.order).A1(mesh).swapaxes(0,1)
 
 
 
@@ -180,7 +192,6 @@ class Interpo(BaseInterpo):
         #self.mesh_order = mesh_order
         #self.mesh_order_new = mesh_order_new
 
-
         for etype in self.mesh_part:
             print(self.mesh_part)
             if self.mesh_part[etype][rank] != 0:
@@ -191,7 +202,8 @@ class Interpo(BaseInterpo):
                 #if etype == 'hex' or 'quad':
                 #    self.ncmsh = etypecls.transfinite(tmsh)
 
-                self.fnormal[f'spt_{mname}'], self.fcenter[f'spt_{mname}'] = etypecls(self.order).pre_calc(self.mesho[f'spt_{mname}'])
+                mesho_order = self._get_order(etype, self.mesho[f'spt_{mname}'].shape[0]) - 1
+                self.fnormal[f'spt_{mname}'], self.fcenter[f'spt_{mname}'] = etypecls(mesho_order).pre_calc(self.mesho[f'spt_{mname}'])
 
                 #print(self.fnormal[f'spt_{mname}'].shape, self.fcenter[f'spt_{mname}'].shape)
 
@@ -208,60 +220,32 @@ class Interpo(BaseInterpo):
                 mesh = np.einsum('ij, jkl -> ikl',mesh_op,self.mesho[f'spt_{mname}'])
                 soln = np.einsum('ij, jkl -> ikl',soln_op,self.soln[f'soln_{mname}'])
 
-                poly_space = self._get_mesh_op(etype, nspts_soln, mesh.reshape(-1,self.ndims)).reshape(nspts_soln,-1,nspts_soln).swapaxes(0,1)
-                print(poly_space.shape, mesh.shape, soln.shape)
-                #print(poly_space.reshape(nspts_soln,-1,nspts_soln)[:,0])
-                #self.mop[f'spt_{mname}'] = np.einsum('ijk,kl->ijl',self.inv(poly_space),soln_op)
+                poly_space = self._get_polyspace(etype, nspts_soln, mesh)
 
                 self.mop[f'spt_{mname}'] = np.einsum('ijk,kmi->ijm',self.inv(poly_space),soln)
 
+                print(poly_space.shape, mesh.shape, soln.shape, self.mop[f'spt_{mname}'].shape)
 
 
-                print(self.mop[f'spt_{mname}'].shape)
+                #print(np.max(self.mop[f'spt_{mname}']), np.max(soln))
 
 
-
-
-
-
-                """
-                # Pre-calculate polynomial space for each element
-                # actually one can calculate coeeficient matrices by solve soln = polyspace*coeff
-                #soln = np.rollaxis(self.soln[f'soln_{mname}'],2)
-                cls = subclass_where(BaseShape, name=etype)
-
-                # polynomial space
-                pspace_py = etypecls(mesh_order).A1(self.mesho[f'spt_{mname}']).swapaxes(0,1)
-                pspace_std = etypecls(mesh_order).A1(np.array(cls.std_ele(mesh_order)),soln_order)
-
-                # the first operator: mapping from physical space to standard space
-                mop0 = np.einsum('ikj,jl->ikl',self.inv(pspace_py), pspace_std)
-
-                pspace_std = etypecls(soln_order).A1(np.array(cls.std_ele(soln_order)))
-                # the second operator: mapping from standard space to solution space
-                mop1 = np.einsum('ij,jkl->ikl',self.inv(pspace_std), self.soln[f'soln_{mname}'])
-
-                self.mop[f'spt_{etype}_p{rank}'] = np.einsum('ijk,kli->ijl',mop0,mop1)
-
-                #print(self.mop[f'spt_{etype}_p{rank}'].shape,'mopshape')
-                """
 
         # this function contents are public
         for name in self.mesh_inf_new:
             #print(rank, name)
             etype = name.split('_')[1]
 
-            #nspts = self.meshn[name].shape[0]
+            nspts = self.meshn[name].shape[0]
             #svpts = self._get_std_ele(etype, nspts)
 
             #print(nspts, np.array(svpts).shape, self._get_soln_op_2(etype, nspts).shape)
-            #self.soln_op[etype] = self.inv(self._get_soln_op_2(etype, nspts))
+            self.soln_op[etype] = self.inv(self._get_soln_op_2(etype, nspts))
 
 
             self.soln_new[f'soln_{etype}_p{rank}'] = np.zeros([self.meshn[name].shape[0],self.nvars,self.meshn[name].shape[1]])
 
-            #print(self.soln_op[etype].shape, self.soln_new[f'soln_{etype}_p{rank}'].shape, nspts, np.array(svpts).shape)
-
+            #print(self.meshn[name].shape[0], self.soln_op[etype].shape)
 
 
     def sortpts(self,name,rank):  #etypen is the new mesh type (looping in the default dictionary)
@@ -282,9 +266,10 @@ class Interpo(BaseInterpo):
             index,loccatch,locmiss = self.loc(self.meshn[name][:,j],rank,j)
 
 
-            #if len(locmiss) != 0:
-            #    print(locmiss, index)
-            #    return 0,0,0
+            #if j == 16:
+            #    print(j, locmiss, loccatch, index)
+            if len(locmiss) != 0:
+                print(j, locmiss, loccatch, index)
 
             if len(locmiss) == self.meshn[name].shape[0]:
                 misslist.append(list(locmiss))
@@ -296,17 +281,7 @@ class Interpo(BaseInterpo):
                 storelist.append(list((j,loccatch,index)))
                 misslist.append(list(locmiss))
                 sendlist.append(list((j,self.meshn[name][locmiss,j])))
-            """
-            if len(locmiss) == self.meshn[name].shape[0]:
-                sendlist[j] = locmiss
-            elif len(locmiss) == 0:
-                catchlist[j] = list(range(len(self.meshn[name][:,j])))
-                storelist.append(list((j,loccatch,index)))
-            else:
-                storelist.append(list((j,loccatch,index)))
-                catchlist[j] = list(set(locmiss).difference(set(list(range(len(self.meshn[name][:,j]))))))
-                sendlist[j] = np.array(locmiss)
-            """
+
 
 
 
@@ -349,7 +324,6 @@ class Interpo(BaseInterpo):
 
                 if len(index_ele) > 0:
                     index_tp = self.checkposition(index_ele, ele[miss], name)
-
                     try:
                         index[name] = index_ele[index_tp]
                         catch[name] = miss
