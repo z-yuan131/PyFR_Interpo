@@ -2,6 +2,8 @@
 from collections import defaultdict
 from mpi4py import MPI
 import numpy as np
+from scipy.linalg import lu_factor, lu_solve, lu
+
 
 from pyfr.util import memoize, subclass_where
 from pyfr.shapes import BaseShape
@@ -37,7 +39,6 @@ class Interpo(BaseInterpo):
 
         # Get operators
         self.ops(rank)
-        #return 0
 
         # Get pts location
         #misslist = defaultdict(list)
@@ -125,7 +126,7 @@ class Interpo(BaseInterpo):
 
     #@memoize
     def _get_std_ele(self, name, nspts):
-        order = self._get_order(name, nspts)
+        order = int(self.cfg.get('solver','order'))
         #print(order)
         return self._get_shape(name, nspts, self.cfg).std_ele(order)
 
@@ -136,42 +137,13 @@ class Interpo(BaseInterpo):
 
     #@memoize
     def _get_mesh_op_sln(self, name, nspts):
-        cfg = Inifile(self.soln['config'])
-        order = self._get_order(name, nspts) - 1
-        nspts = self._get_npts(name, order)
-        svpts = self._get_std_ele(name,nspts)
-        cfg.set('solver','order',order)
-        shape = self._get_shape(name, nspts, cfg)
-        return shape.ubasis.nodal_basis_at(svpts).astype(self.dtype)
-
-    #@memoize
-    def _get_soln_op(self, name, nspts, svpts):
         shape = self._get_shape(name, nspts, self.cfg)
-        return shape.ubasis.nodal_basis_at(svpts).astype(self.dtype)
+        upts = shape.upts
+        return shape.sbasis.nodal_basis_at(upts).astype(self.dtype)
 
     def _get_ortho_basis(self, name, nspts, svpts):
         shape = self._get_shape(name, nspts, self.cfg)
         return shape.sbasis.ortho_basis_at(svpts).astype(self.dtype)
-
-    def _get_npts(self, name, order):
-        return self._get_shape(name, 0, self.cfg).nspts_from_order(order)
-
-    def _get_order(self, name, nspts):
-        return self._get_shape(name, nspts, self.cfg).order_from_nspts(nspts)
-
-    def _get_soln_op_2(self, name, nspts):
-        cfg = Inifile(self.soln['config'])
-
-        order = self._get_order(name, nspts) - 1
-
-        nspts = self._get_npts(name, order)
-        svpts = self._get_std_ele(name,nspts)
-        cfg.set('solver','order',order)
-
-        self.new_mesh_order = order
-
-        shape = self._get_shape(name, nspts, cfg)
-        return shape.ubasis.nodal_basis_at(svpts).astype(self.dtype)
 
     def _get_polyspace(self, name, nspts, mesh, Jacobi = True):
         if Jacobi and mesh.ndim == 3:
@@ -181,6 +153,34 @@ class Interpo(BaseInterpo):
         else:
             etypecls = subclass_where(InterpolationShape, name=name)
             return etypecls(self.order).A1(mesh).swapaxes(0,1)
+
+    def _get_polyspace2(self, name, nspts, mesh, Jacobi = True):
+
+        return np.array([self._get_ortho_basis(name, nspts, mesh[:,eid]).T for eid in range(mesh.shape[1])])
+
+
+
+
+
+    def _get_npts(self, name, order):
+        return self._get_shape(name, 0, self.cfg).nspts_from_order(order)
+
+    def _get_order(self, name, nspts):
+        return self._get_shape(name, nspts, self.cfg).order_from_nspts(nspts)
+
+    def _get_soln_op(self, name, nspts):
+        cfg = Inifile(self.soln['config'])
+
+        order = self._get_order(name, nspts) - 1
+
+        nspts = self._get_npts(name, order + 1)
+        svpts = self._get_std_ele(name,nspts)
+        cfg.set('solver','order',order)
+
+        self.new_mesh_order = order
+
+        shape = self._get_shape(name, nspts, cfg)
+        return shape.sbasis.nodal_basis_at(shape.upts).astype(self.dtype)
 
 
 
@@ -222,55 +222,38 @@ class Interpo(BaseInterpo):
                 nspts_soln = self.soln[f'soln_{mname}'].shape[0]
 
                 svpts = self._get_std_ele(etype, nspts)
-                #svpts = self._get_std_ele(etype, nspts)
 
                 mesh_op = self._get_mesh_op_vis(etype, nspts, svpts)
-                soln_op = self._get_soln_op(etype, nspts, svpts)
+                mesh_op = self._get_mesh_op_sln(etype, nspts_soln) @ mesh_op
+                #soln_op = self._get_soln_op(etype, nspts, svpts)
 
                 mesh = np.einsum('ij, jkl -> ikl',mesh_op,self.mesho[f'spt_{mname}'])
-                soln = np.einsum('ij, jkl -> ikl',soln_op,self.soln[f'soln_{mname}'])
+                #soln = np.einsum('ij, jkl -> ikl',soln_op,self.soln[f'soln_{mname}'])
 
                 #mesh_op_sln = self._get_mesh_op_sln(etype, mesh.shape[0])
-                #mesh = np.einsum('ij, jkl -> ikl',self.inv(mesh_op_sln),mesh)
+                #mesh = np.einsum('ij, jkl -> ikl',mesh_op_sln,mesh)
 
-                poly_space = self._get_polyspace(etype, nspts_soln, mesh)
+                poly_space = self._get_polyspace2(etype, nspts_soln, mesh)
 
                 if not np.allclose(np.linalg.matrix_rank(poly_space), np.ones(poly_space.shape[0])*poly_space.shape[1]):
                     import warnings
                     warnings.warn(f"Some polynomial space matrices in shape {etype} are not well-determined, results could be random.")
-                    self.mop[f'spt_{mname}'] = np.einsum('ijk,kmi->ijm',self.pinv(poly_space),soln)
+                    self.mop[f'spt_{mname}'] = np.einsum('ijk,kmi->ijm',self.pinv(poly_space),self.soln[f'soln_{mname}'])
+
+                    print(np.min(np.linalg.cond(poly_space)),np.max(np.linalg.cond(poly_space)))
                 else:
-                    self.mop[f'spt_{mname}'] = np.einsum('ijk,kmi->ijm',self.inv(poly_space),soln)
-
-                #print(poly_space.shape, mesh.shape, soln.shape, self.mop[f'spt_{mname}'].shape)
-                #print(self.mesho[f'spt_{mname}'].shape, mesh_op.shape, poly_space.shape, soln.shape, self.mop[f'spt_{mname}'].shape)
+                    self.mop[f'spt_{mname}'] = np.einsum('ijk,kmi->ijm',self.inv(poly_space),self.soln[f'soln_{mname}'])
 
 
-
-                #for ele in range(poly_space.shape[0]):
-                #    if np.linalg.matrix_rank(poly_space[ele]) != poly_space.shape[1]:
-                #        print(ele)
-
-
-                #print(np.max(self.mop[f'spt_{mname}']), np.max(soln))
-
-
+                #self.mop[f'spt_{mname}'] = self.solve(poly_space, soln)
 
         # this function contents are public
         for name in self.mesh_inf_new:
-            #print(rank, name)
             etype = name.split('_')[1]
-
             nspts = self.meshn[name].shape[0]
-            #svpts = self._get_std_ele(etype, nspts)
 
-            #print(nspts, np.array(svpts).shape, self._get_soln_op_2(etype, nspts).shape)
-            self.soln_op[etype] = self.inv(self._get_soln_op_2(etype, nspts))
-
-
+            self.soln_op[etype] = self._get_soln_op(etype, nspts)
             self.soln_new[f'soln_{etype}_p{rank}'] = np.zeros([self.meshn[name].shape[0],self.nvars,self.meshn[name].shape[1]])
-
-            #print(self.meshn[name].shape[0], self.soln_op[etype].shape)
 
 
     def sortpts(self,name,rank):  #etypen is the new mesh type (looping in the default dictionary)
@@ -454,3 +437,14 @@ class Interpo(BaseInterpo):
 
     def pinv(self, mat):
         return np.linalg.pinv(mat)
+
+    def solve(self, poly_space, soln):
+        # Use numpy solve module
+        # If a must be square and of full-rank, i.e., all rows (or, equivalently, columns) must be linearly independent;
+        # if either is not true, use lstsq for the least-squares best “solution” of the system/equation.
+        # return np.linalg.solve(poly_space, np.rollaxis(soln,2))
+
+
+        # Use scipy lu decomposition module
+        #soln = np.rollaxis(soln,2)
+        return np.array([lu_solve(lu_factor(poly_space[eid]), soln[...,eid]) for eid in range(len(poly_space))])

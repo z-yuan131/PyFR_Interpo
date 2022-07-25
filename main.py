@@ -13,7 +13,7 @@ def main():
     nmeshname = './files/mesh_new2.pyfrm'
 
 
-    sys.argv = [oininame,omeshname,solnname,nmeshname]
+    sys.argv = [oininame,omeshname,solnname,omeshname]
 
     Interpo(sys.argv).getID()
 
