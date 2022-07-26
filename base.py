@@ -42,7 +42,7 @@ class BaseInterpo(object):
         self.nvars = next(iter(self.soln_inf.values()))[1][1]
 
         # linear elements
-        self.lin = [self.mesho.__getitem__([key,'linear']) for key in self.mesh_inf_old]
+        #self.lin = [self.mesho.__getitem__([key,'linear']) for key in self.mesh_inf_old]
 
         # type of meshes
         self.oldname = self.loadname(self.mesho)

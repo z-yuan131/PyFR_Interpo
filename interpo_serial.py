@@ -19,6 +19,11 @@ class Interpo(BaseInterpo):
         self.argv = argv
 
 
+        #print(list(self.oldname))
+        #print(self.mesh_part)
+
+
+
 
     def getID(self):
         print('-----------------------------\n')
@@ -36,55 +41,62 @@ class Interpo(BaseInterpo):
         self.ops(rank)
 
         # Get pts location
+        #misslist = defaultdict(list)
+        #storelist = defaultdict(list)
+        #sendlist = defaultdict(list)
         for name in self.mesh_inf_new:
             # Step 1: search node list inside current ranks
-            #sendlist, storelist, misslist = self.sortpts(name, rank)
-            storelist = self.sortpts(name, rank)
-
-            # Use serial output
-            soln = comm.gather(self.post_proc(storelist, name), root = 0)
-
-            if rank == 0:
-                self.post_proc_soln(soln)
+            sendlist, storelist, misslist = self.sortpts(name, rank)
 
 
-        if rank == 0:
-            self.write_soln()
+            #return 0
+
+            #print(rank, len(sendlist), 'send', name)
+            #print(rank, len(storelist), 'store', name)
+            #print(rank, len(storelist), 'store', name)
+
+            #Alist = defaultdict()
+
+            self.post_proc(storelist, name)
+
+            #_prefix,etype,part = name.split('_')
+
+            #print(etype,self.soln[f'soln_{etype}_{part}'].shape,self.soln_new[f'soln_{etype}_{part}'].shape)
+            #print(etype,np.max(self.soln_new[f'soln_{etype}_{part}'] - self.soln[f'soln_{etype}_{part}']))
+        self.post_proc_soln()
+
+        self.write_soln()
 
 
     def post_proc(self, storelist, new_name):
         _prefix, _etypen, _part = new_name.split('_')
-        soln = defaultdict(list)
+        temp = defaultdict(list)
         #print(storelist)
         for eid, catchlist, index in storelist:
             for old_name in catchlist:
+                # Import relevant class
+                #cls = subclass_where(InterpolationShape, name=etype_name.split('_')[1])
+                # Polynomial space
+                #pspace_py = cls(self.mesh_order).A1(self.meshn[name][catchlist[etype_name],eid])
+                # Rebuild solution
+                #self.soln_new[f'soln_{_etypen}_{_part}'][catchlist[etype_name],:,eid] = np.einsum('ij,ijk->ik',pspace_py, self.mop[etype_name][index[etype_name]])
+                _prefix,_etypeo,_parto = old_name.split('_')
 
-                if len(catchlist[old_name]) > 0:
-                    _prefix,_etypeo,_parto = old_name.split('_')
+                poly_space = self._get_polyspace(_etypeo, self.soln[f'soln_{_etypeo}_{_parto}'].shape[0], self.meshn[new_name][catchlist[old_name],eid])#.swapaxes(0,1)
+                #print(poly_space.shape, self.mop[old_name][index[old_name]].shape)
 
-                    # Polynomial space
-                    poly_space = self._get_polyspace(_etypeo, self.soln[f'soln_{_etypeo}_{_parto}'].shape[0], self.meshn[new_name][catchlist[old_name],eid])#.swapaxes(0,1)
-                    #print(poly_space.shape, self.mop[old_name][index[old_name]].shape)
+                self.soln_new[f'soln_{_etypen}_{_part}'][catchlist[old_name],:,eid] = np.einsum('ij,ijk -> ik', poly_space, self.mop[old_name][index[old_name]])
 
-                    # Rebuild solution
-                    #self.soln_new[f'soln_{_etypen}_{_part}'][catchlist[old_name],:,eid] = np.einsum('ij,ijk -> ik', poly_space, self.mop[old_name][index[old_name]])
-                    loc_soln = np.einsum('ij,ijk -> ik', poly_space, self.mop[old_name][index[old_name]])
-                    soln[f'soln_{_etypen}_{_part}'].append(list((eid, catchlist[old_name], loc_soln)))
+                if np.max(self.soln_new[f'soln_{_etypen}_{_part}'][catchlist[old_name],:,eid]) > 1000:
+                    print(eid, index[old_name])
+                #print(np.max(self.soln_new[f'soln_{_etypen}_{_part}']), np.max(poly_space), np.max(self.mop[old_name][index[old_name]]))
+                #print(index[old_name], catchlist[old_name], eid, new_name, old_name)
+                #raise ValueError
 
-                else:
-                    soln[f'soln_{_etypen}_{_part}'].append(list())
-
-
-        return soln
-
-    def post_proc_soln(self, soln):
-        for i in range(len(soln)):
-            for key in soln[i].keys():
-                for eid, catchlist, loc_soln in soln[i][key]:
-                    self.soln_new[key][catchlist,:,eid] = loc_soln
-
+    def post_proc_soln(self):
         for key in self.soln_new:
             _prefix,etype,part = key.split('_')
+            print(self.soln_op[etype].shape, self.soln_new[key].shape)
             self.soln_new[key] = np.einsum('ij,jkl -> ikl',self.soln_op[etype], self.soln_new[key])
 
 
@@ -191,7 +203,7 @@ class Interpo(BaseInterpo):
         #self.mesh_order_new = mesh_order_new
 
         for etype in self.mesh_part:
-            print(self.mesh_part[etype], rank)
+            print(self.mesh_part)
             if self.mesh_part[etype][rank] != 0:
                 mname = f'{etype}_p{rank}'
 
@@ -237,44 +249,54 @@ class Interpo(BaseInterpo):
 
         # this function contents are public
         for name in self.mesh_inf_new:
-            etype, part = name.split('_')[1:]
+            etype = name.split('_')[1]
             nspts = self.meshn[name].shape[0]
 
             self.soln_op[etype] = self._get_soln_op(etype, nspts)
-            self.soln_new[f'soln_{etype}_{part}'] = np.zeros([self.meshn[name].shape[0],self.nvars,self.meshn[name].shape[1]])
+            self.soln_new[f'soln_{etype}_p{rank}'] = np.zeros([self.meshn[name].shape[0],self.nvars,self.meshn[name].shape[1]])
 
 
     def sortpts(self,name,rank):  #etypen is the new mesh type (looping in the default dictionary)
         #name = f'spt_{etype}_p{rank}'
 
         storelist = list()#defaultdict()
-        #sendlist = list()#defaultdict()
+        sendlist = list()#defaultdict()
+        catchlist = list()#defaultdict()
         misslist = list()
 
         for j in range(self.meshn[name].shape[1]):
+            #if rank == 0:
+            #    print((j+1)/self.meshn[name].shape[1])
 
             # send one point to the function to decide if is in this partition
             # more prcisely, in which old element. new mesh has shape: [Npt, Nele, Nvar]
-            if rank == 0:
-                print(j/self.meshn[name].shape[1])
 
             index,loccatch,locmiss = self.loc(self.meshn[name][:,j],rank,j)
 
 
+            #if j == 16:
+            #    print(j, locmiss, loccatch, index)
+            if len(locmiss) != 0:
+                print(j, locmiss, loccatch, index)
+
             if len(locmiss) == self.meshn[name].shape[0]:
                 misslist.append(list(locmiss))
-                #sendlist.append(list((j,self.meshn[name][:,j])))
+                sendlist.append(list((j,self.meshn[name][:,j])))
             elif len(locmiss) == 0:
-                #misslist.append(list())
+                misslist.append(list())
                 storelist.append(list((j,loccatch,index)))
             else:
                 storelist.append(list((j,loccatch,index)))
-                #misslist.append(list(locmiss))
-                #sendlist.append(list((j,self.meshn[name][locmiss,j])))
+                misslist.append(list(locmiss))
+                sendlist.append(list((j,self.meshn[name][locmiss,j])))
 
 
-        #return sendlist, storelist, misslist
-        return storelist
+
+
+
+        #print(len(sendlist[f'{etypen}_p{rank}']),len(storelist[f'{etypen}_p{rank}']),self.mshn[etypen].shape[1])
+
+        return sendlist, storelist, catchlist
 
     def sortpts2(self, revlist, rank):
         catchlist = list()
