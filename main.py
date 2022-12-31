@@ -2,34 +2,20 @@
 import sys
 from argparse import ArgumentParser, FileType
 
-from interpo import Interpo
+from interpolation import Interpolationcls
 
 def main():
 
-    oininame = 'a'
-    solnname = './files/post/solution2.pyfrs'
-    omeshname = './files/post/mesh.pyfrm'
+    solnname = '/Users/yuanzhenyang/develop/interpolation_use_files/solution_old.pyfrs'
+    omeshname = '/Users/yuanzhenyang/develop/interpolation_use_files/mesh_old.pyfrm'
 
-    # more partitions
-    solnname = './files/solution2.pyfrs'
-    omeshname = './files/mesh.pyfrm'
-
-    nmeshname = './files/mesh_new2.pyfrm'
-
-    # channel case 3D
-    solnname = './large_files/channel_1000.00.pyfrs'
-    omeshname = './large_files/mesh_channel.pyfrm'
-
-    nmeshname = './large_files/refine.pyfrm'
+    nmeshname = '/Users/yuanzhenyang/develop/interpolation_use_files/mesh_new.pyfrm'
+    nsolnname = '/Users/yuanzhenyang/develop/interpolation_use_files/soln_new.pyfrs'
 
 
-    sys.argv = [oininame,omeshname,solnname,nmeshname]
+    sys.argv = [omeshname,solnname,nmeshname,nsolnname]
 
-    Interpo(sys.argv).getID()
-
-    #print(oininame)
-
-
+    Interpolationcls(sys.argv).mainproc()
 
 
 if __name__ == "__main__":
